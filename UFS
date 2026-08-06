@@ -1,0 +1,1741 @@
+-- Clean up old instance connections if re-executed to prevent ghost inputs
+if getgenv().CFS_Connections then
+    for _, conn in ipairs(getgenv().CFS_Connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+end
+getgenv().CFS_Connections = {}
+
+local function trackConnection(conn)
+    table.insert(getgenv().CFS_Connections, conn)
+    return conn
+end
+
+-- Forcefully restore character and camera states on re-execute
+if getgenv().IY_Style_Freecam then
+    getgenv().IY_Style_Freecam:Disconnect()
+    getgenv().IY_Style_Freecam = nil
+    
+    local camera = workspace.CurrentCamera
+    camera.CameraType = Enum.CameraType.Custom
+    camera.FieldOfView = 70
+    
+    game:GetService("UserInputService").MouseBehavior = Enum.MouseBehavior.Default
+    pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
+    
+    local oldUi = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("FreecamUI")
+    if oldUi then oldUi:Destroy() end
+
+    pcall(function()
+        local player = game:GetService("Players").LocalPlayer
+        local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule"))
+        PlayerModule:GetControls():Enable()
+        
+        if player.Character then
+            local hum = player.Character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                if hum.WalkSpeed == 0 then hum.WalkSpeed = 16 end
+                if hum.JumpPower == 0 then hum.JumpPower = 50 end
+            end
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then hrp.Anchored = false end
+        end
+    end)
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+-- GUI Scale
+local SCALE = 1.0
+local function S(n) return math.floor(n * SCALE + 0.5) end
+
+-- Configuration Keys 
+local TOGGLE_KEY = Enum.KeyCode.T     
+local MENU_KEY = Enum.KeyCode.F 
+local GRID_TOGGLE_KEY = Enum.KeyCode.V       
+local SPEED_DOWN_KEY = Enum.KeyCode.LeftBracket  
+local SPEED_UP_KEY = Enum.KeyCode.RightBracket   
+
+-- State variables
+local active = false
+local menuVisible = false
+local showingInstructions = false
+local minimized = false
+local targets = {} 
+local camCFrame = camera.CFrame
+local targetRotationX, targetRotationY = 0, 0
+local rotationX, rotationY = 0, 0
+local rotationZ = 0
+local savedDefaultFov = camera.FieldOfView
+
+-- Smooth Orbit Variables
+local orbitDistance = 20 
+local targetOrbitDistance = 20 
+
+-- Custom Orbit Variables
+local customOrbitCenter = camera.CFrame.Position + (camera.CFrame.LookVector * 20)
+
+-- Tuned Parameters
+local mouseSmoothness = 15
+local movementSmoothness = 12 
+local forwardSpeed = 1.0
+local sideSpeed = 1.0
+local minSpeed = 0.05
+local maxSpeed = 50.0
+local speedStep = 0.05
+local shiftMultiplier = 2.0 
+local slowMultiplier = 2.0  
+local sensitivity = 0.1
+local targetFov = 70
+local minFov = 0.1
+local maxFov = 120
+local scrollSensitivity = 5.0 -- Dynamic scroll FOV sensitivity (1-10)
+local smoothingWeight = 0 -- Set tracking smoothness to 0 by default
+local minSmooth = 1
+local maxSmooth = 30
+local verticalSpeed = 1.0
+local minVerticalSpeed = 0.05
+local maxVerticalSpeed = 10.0
+local tiltSpeed = 50.0
+local minTiltSpeed = 10.0
+local maxTiltSpeed = 360.0
+local cameraHeightOffset = 0.0
+local minHeightOffset = -100.0
+local maxHeightOffset = 100.0
+local trackingMode = nil 
+
+local movement = {W = 0, A = 0, S = 0, D = 0, E = 0, Q = 0, Z = 0, X = 0}
+local smoothedMovement = {W = 0, A = 0, S = 0, D = 0, E = 0, Q = 0, Z = 0, X = 0}
+
+local getTrackingCenter
+local toggleFreecam
+local toggleGridOverlay
+
+local playerGui = player:WaitForChild("PlayerGui", 10)
+if not playerGui then return end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "FreecamUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true 
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = playerGui
+
+-- ==========================================
+-- RULE OF THIRDS & CROSSHAIR OVERLAY
+-- ==========================================
+local GridOverlay = Instance.new("Frame")
+GridOverlay.Name = "GridOverlay"
+GridOverlay.Size = UDim2.new(1, 0, 1, 0)
+GridOverlay.BackgroundTransparency = 1
+GridOverlay.ZIndex = 0
+GridOverlay.Visible = false
+GridOverlay.Parent = ScreenGui
+
+local lineColor = Color3.fromRGB(255, 255, 255)
+local lineTransparency = 0
+
+local vLine1 = Instance.new("Frame", GridOverlay)
+vLine1.Size = UDim2.new(0, 1, 1, 0)
+vLine1.Position = UDim2.new(1/3, 0, 0, 0)
+vLine1.BackgroundColor3 = lineColor
+vLine1.BackgroundTransparency = lineTransparency
+vLine1.BorderSizePixel = 0
+
+local vLine2 = Instance.new("Frame", GridOverlay)
+vLine2.Size = UDim2.new(0, 1, 1, 0)
+vLine2.Position = UDim2.new(2/3, 0, 0, 0)
+vLine2.BackgroundColor3 = lineColor
+vLine2.BackgroundTransparency = lineTransparency
+vLine2.BorderSizePixel = 0
+
+local hLine1 = Instance.new("Frame", GridOverlay)
+hLine1.Size = UDim2.new(1, 0, 0, 1)
+hLine1.Position = UDim2.new(0, 0, 1/3, 0)
+hLine1.BackgroundColor3 = lineColor
+hLine1.BackgroundTransparency = lineTransparency
+hLine1.BorderSizePixel = 0
+
+local hLine2 = Instance.new("Frame", GridOverlay)
+hLine2.Size = UDim2.new(1, 0, 0, 1)
+hLine2.Position = UDim2.new(0, 0, 2/3, 0)
+hLine2.BackgroundColor3 = lineColor
+hLine2.BackgroundTransparency = lineTransparency
+hLine2.BorderSizePixel = 0
+
+local crossColor = Color3.fromRGB(255, 255, 255)
+
+local crossHairV = Instance.new("Frame", GridOverlay)
+crossHairV.Size = UDim2.new(0, 3, 0, 35)
+crossHairV.Position = UDim2.new(0.5, 0, 0.5, 0)
+crossHairV.AnchorPoint = Vector2.new(0.5, 0.5)
+crossHairV.BackgroundColor3 = crossColor
+crossHairV.BorderSizePixel = 0
+
+local crossHairH = Instance.new("Frame", GridOverlay)
+crossHairH.Size = UDim2.new(0, 35, 0, 3)
+crossHairH.Position = UDim2.new(0.5, 0, 0.5, 0)
+crossHairH.AnchorPoint = Vector2.new(0.5, 0.5)
+crossHairH.BackgroundColor3 = crossColor
+crossHairH.BorderSizePixel = 0
+
+-- Dynamic Canvas Dimensions
+local FULL_CANVAS_WIDTH = S(360) 
+local HEADER_HEIGHT = S(35)
+local INSTRUCTIONS_HEIGHT = S(530)
+
+local slidersOpen = false -- Set to false by default so sliders menu starts collapsed
+local keysOpen = false 
+
+local MainCanvas = Instance.new("CanvasGroup")
+MainCanvas.Name = "MainCanvas"
+MainCanvas.Position = UDim2.new(0.05, 0, 0.15, 0)
+MainCanvas.BackgroundTransparency = 1
+MainCanvas.GroupTransparency = 1
+MainCanvas.Visible = false
+MainCanvas.Active = true
+MainCanvas.Draggable = true 
+MainCanvas.Parent = ScreenGui
+
+local MainPanel = Instance.new("Frame")
+MainPanel.Name = "MainPanel"
+MainPanel.Size = UDim2.new(1, 0, 1, 0)
+MainPanel.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+MainPanel.BorderSizePixel = 0
+MainPanel.Parent = MainCanvas
+
+local function applyDarkGradient(instance)
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(12, 14, 23)), 
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(4, 4, 6))    
+    })
+    gradient.Rotation = 45
+    gradient.Parent = instance
+end
+
+local function applyBorderGradient(instance)
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 45, 75)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 16, 28))
+    })
+    gradient.Rotation = 45
+    gradient.Parent = instance
+end
+
+applyDarkGradient(MainPanel)
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, S(8))
+MainCorner.Parent = MainPanel
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Thickness = 1.5
+MainStroke.Color = Color3.fromRGB(255, 255, 255)
+MainStroke.Parent = MainPanel
+applyBorderGradient(MainStroke)
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -S(122), 0, S(35))
+Title.Position = UDim2.new(0, S(14), 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "UFS by @kuwcinggg"
+Title.TextColor3 = Color3.fromRGB(230, 235, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = S(13)
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = MainPanel
+
+local ControlsFrame = Instance.new("Frame")
+ControlsFrame.Name = "ControlsFrame"
+ControlsFrame.Size = UDim2.new(1, 0, 1, -S(35))
+ControlsFrame.Position = UDim2.new(0, 0, 0, S(35))
+ControlsFrame.BackgroundTransparency = 1
+ControlsFrame.Parent = MainPanel
+
+local InstructionsFrame = Instance.new("Frame")
+InstructionsFrame.Name = "InstructionsFrame"
+InstructionsFrame.Size = UDim2.new(1, 0, 1, -S(35))
+InstructionsFrame.Position = UDim2.new(0, 0, 0, S(35))
+InstructionsFrame.BackgroundTransparency = 1
+InstructionsFrame.Visible = false
+InstructionsFrame.Parent = MainPanel
+
+-- Forward declare updateLayout for UI buttons
+local updateLayout
+
+local function toggleMenu(show)
+    if show then
+        MainCanvas.Visible = true
+        TweenService:Create(MainCanvas, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency = 0}):Play()
+        refreshPlayerList()
+    else
+        local tween = TweenService:Create(MainCanvas, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {GroupTransparency = 1})
+        tween:Play()
+        tween.Completed:Connect(function()
+            if not menuVisible then MainCanvas.Visible = false end
+        end)
+    end
+end
+
+local CloseButton = Instance.new("TextButton")
+CloseButton.Name = "CloseButton"
+CloseButton.Size = UDim2.new(0, S(24), 0, S(24))
+CloseButton.Position = UDim2.new(1, -S(28), 0, S(6))
+CloseButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+CloseButton.Text = "×"
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.Font = Enum.Font.GothamBold
+CloseButton.TextSize = S(18)
+CloseButton.Parent = MainPanel
+
+Instance.new("UICorner", CloseButton).CornerRadius = UDim.new(0, S(4))
+
+CloseButton.MouseButton1Click:Connect(function()
+    menuVisible = false
+    showingInstructions = false
+    ControlsFrame.Visible = true
+    InstructionsFrame.Visible = false
+    toggleMenu(false)
+end)
+
+local HelpButton = Instance.new("TextButton")
+HelpButton.Name = "HelpButton"
+HelpButton.Size = UDim2.new(0, S(24), 0, S(24))
+HelpButton.Position = UDim2.new(1, -S(56), 0, S(6))
+HelpButton.BackgroundColor3 = Color3.fromRGB(84, 134, 216)
+HelpButton.Text = "?"
+HelpButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+HelpButton.Font = Enum.Font.GothamBold
+HelpButton.TextSize = S(14)
+HelpButton.Parent = MainPanel
+
+Instance.new("UICorner", HelpButton).CornerRadius = UDim.new(0, S(4))
+
+HelpButton.MouseButton1Click:Connect(function()
+    showingInstructions = not showingInstructions
+    if showingInstructions then
+        ControlsFrame.Visible = false
+        InstructionsFrame.Visible = true
+        TweenService:Create(MainCanvas, TweenInfo.new(0.2), {Size = UDim2.new(0, FULL_CANVAS_WIDTH, 0, INSTRUCTIONS_HEIGHT)}):Play()
+    else
+        InstructionsFrame.Visible = false
+        ControlsFrame.Visible = true
+        updateLayout(true)
+    end
+end)
+
+local MinimizeButton = Instance.new("TextButton")
+MinimizeButton.Name = "MinimizeButton"
+MinimizeButton.Size = UDim2.new(0, S(24), 0, S(24))
+MinimizeButton.Position = UDim2.new(1, -S(84), 0, S(6))
+MinimizeButton.BackgroundColor3 = Color3.fromRGB(220, 200, 100)
+MinimizeButton.Text = "–"
+MinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeButton.Font = Enum.Font.GothamBold
+MinimizeButton.TextSize = S(16)
+MinimizeButton.Parent = MainPanel
+
+Instance.new("UICorner", MinimizeButton).CornerRadius = UDim.new(0, S(4))
+
+MinimizeButton.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    if minimized then
+        ControlsFrame.Visible = false
+        InstructionsFrame.Visible = false
+        MinimizeButton.Text = "▼"
+        TweenService:Create(MainCanvas, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(0, FULL_CANVAS_WIDTH, 0, HEADER_HEIGHT)
+        }):Play()
+    else
+        MinimizeButton.Text = "–"
+        if showingInstructions then
+            InstructionsFrame.Visible = true
+            TweenService:Create(MainCanvas, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Size = UDim2.new(0, FULL_CANVAS_WIDTH, 0, INSTRUCTIONS_HEIGHT)
+            }):Play()
+        else
+            ControlsFrame.Visible = true
+            updateLayout(true)
+        end
+    end
+end)
+
+local StatusDot = Instance.new("Frame")
+StatusDot.Name = "StatusDot"
+StatusDot.Size = UDim2.new(0, S(10), 0, S(10))
+StatusDot.Position = UDim2.new(0, S(14), 0, S(8))
+StatusDot.BackgroundColor3 = Color3.fromRGB(128, 128, 128)
+StatusDot.BorderSizePixel = 0
+StatusDot.Parent = ControlsFrame
+Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Name = "StatusLabel"
+StatusLabel.Size = UDim2.new(1, -S(110), 0, S(16))
+StatusLabel.Position = UDim2.new(0, S(28), 0, S(5))
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "FREECAM: OFF"
+StatusLabel.TextColor3 = Color3.fromRGB(170, 175, 185)
+StatusLabel.Font = Enum.Font.GothamBold
+StatusLabel.TextSize = S(12)
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Parent = ControlsFrame
+
+local ToggleFreecamButton = Instance.new("TextButton")
+ToggleFreecamButton.Name = "ToggleFreecamButton"
+ToggleFreecamButton.Size = UDim2.new(0, S(110), 0, S(20))
+ToggleFreecamButton.Position = UDim2.new(0.89, -S(84), 0, S(3))
+ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) -- Red initially (Turn ON)
+ToggleFreecamButton.Text = "TURN ON"
+ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+ToggleFreecamButton.Font = Enum.Font.GothamBold
+ToggleFreecamButton.TextSize = S(11)
+ToggleFreecamButton.AutoButtonColor = false
+ToggleFreecamButton.Parent = ControlsFrame
+
+local ToggleFreecamCorner = Instance.new("UICorner")
+ToggleFreecamCorner.CornerRadius = UDim.new(0, S(4))
+ToggleFreecamCorner.Parent = ToggleFreecamButton
+
+local ToggleFreecamStroke = Instance.new("UIStroke")
+ToggleFreecamStroke.Thickness = 0
+ToggleFreecamStroke.Parent = ToggleFreecamButton
+applyBorderGradient(ToggleFreecamStroke)
+
+ToggleFreecamButton.MouseButton1Click:Connect(function()
+    toggleFreecam()
+end)
+
+local function updateStatusIndicator()
+    if active then
+        StatusDot.BackgroundColor3 = Color3.fromRGB(70, 200, 55)
+        StatusLabel.Text = "FREECAM: ON"
+        StatusLabel.TextColor3 = Color3.fromRGB(140, 230, 130)
+        ToggleFreecamButton.Text = "TURN OFF"
+        ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(140, 230, 130) -- Green (#8ce682)
+        ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+    else
+        StatusDot.BackgroundColor3 = Color3.fromRGB(128, 128, 128)
+        StatusLabel.Text = "FREECAM: OFF"
+        StatusLabel.TextColor3 = Color3.fromRGB(170, 175, 185)
+        ToggleFreecamButton.Text = "TURN ON"
+        ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) -- Red (#ff968c)
+        ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+    end
+end
+
+local SearchBar = Instance.new("TextBox")
+SearchBar.Name = "SearchBar"
+SearchBar.Size = UDim2.new(1, -S(56), 0, S(22))
+SearchBar.Position = UDim2.new(0, S(14), 0, S(32))
+SearchBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+SearchBar.PlaceholderText = "Search username..."
+SearchBar.Text = ""
+SearchBar.TextColor3 = Color3.fromRGB(0, 0, 0)
+SearchBar.PlaceholderColor3 = Color3.fromRGB(20, 20, 20)
+SearchBar.Font = Enum.Font.Code
+SearchBar.TextSize = S(12)
+SearchBar.ClearTextOnFocus = false
+SearchBar.ClipsDescendants = true
+SearchBar.Parent = ControlsFrame
+Instance.new("UICorner", SearchBar).CornerRadius = UDim.new(0, S(4))
+
+local ClearSearchButton = Instance.new("TextButton")
+ClearSearchButton.Name = "ClearSearchButton"
+ClearSearchButton.Size = UDim2.new(0, S(22), 0, S(22))
+ClearSearchButton.Position = UDim2.new(1, -S(35), 0, S(32))
+ClearSearchButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+ClearSearchButton.Text = "×"
+ClearSearchButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ClearSearchButton.Font = Enum.Font.GothamBold
+ClearSearchButton.TextSize = S(27)
+ClearSearchButton.AutoButtonColor = false
+ClearSearchButton.Parent = ControlsFrame
+Instance.new("UICorner", ClearSearchButton).CornerRadius = UDim.new(0, S(4))
+
+ClearSearchButton.MouseButton1Click:Connect(function()
+    SearchBar.Text = ""
+end)
+
+local searchQuery = ""
+trackConnection(SearchBar:GetPropertyChangedSignal("Text"):Connect(function()
+    searchQuery = SearchBar.Text:lower()
+    refreshPlayerList()
+end))
+
+local PlayerList = Instance.new("ScrollingFrame")
+PlayerList.Size = UDim2.new(1, -S(28), 0, S(120))
+PlayerList.Position = UDim2.new(0, S(14), 0, S(58))
+PlayerList.BackgroundColor3 = Color3.fromRGB(8, 9, 13)
+PlayerList.BorderSizePixel = 0
+PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
+PlayerList.ScrollBarThickness = S(10)
+PlayerList.ScrollBarImageColor3 = Color3.fromRGB(45, 55, 80)
+PlayerList.Parent = ControlsFrame
+
+Instance.new("UICorner", PlayerList).CornerRadius = UDim.new(0, S(6))
+local ListStroke = Instance.new("UIStroke")
+ListStroke.Thickness = 2
+ListStroke.Color = Color3.fromRGB(255, 255, 255)
+ListStroke.Parent = PlayerList
+applyBorderGradient(ListStroke)
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.SortOrder = Enum.SortOrder.Name
+UIListLayout.Padding = UDim.new(0, S(5)) 
+UIListLayout.Parent = PlayerList
+
+local ListPadding = Instance.new("UIPadding")
+ListPadding.PaddingTop = UDim.new(0, S(6))
+ListPadding.PaddingBottom = UDim.new(0, S(6))
+ListPadding.PaddingLeft = UDim.new(0, S(6))  
+ListPadding.PaddingRight = UDim.new(0, S(6))
+ListPadding.Parent = PlayerList
+
+local COLOR_ON = Color3.fromRGB(70, 200, 55)     
+local COLOR_OFF = Color3.fromRGB(222, 124, 126)  
+local COLOR_NEITHER = Color3.fromRGB(128, 128, 128) 
+
+local HeadTrackButton = Instance.new("TextButton")
+HeadTrackButton.Size = UDim2.new(0.3, 0, 0, S(22))
+HeadTrackButton.Position = UDim2.new(0, S(14), 0, S(184))
+HeadTrackButton.Text = "HEAD"
+HeadTrackButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+HeadTrackButton.Font = Enum.Font.GothamBold
+HeadTrackButton.TextSize = S(11)
+HeadTrackButton.AutoButtonColor = false
+HeadTrackButton.Parent = ControlsFrame
+Instance.new("UICorner", HeadTrackButton).CornerRadius = UDim.new(0, S(4))
+
+local BodyTrackButton = Instance.new("TextButton")
+BodyTrackButton.AnchorPoint = Vector2.new(0.5, 0)
+BodyTrackButton.Size = UDim2.new(0.3, 0, 0, S(22))
+BodyTrackButton.Position = UDim2.new(0.5, 0, 0, S(184))
+BodyTrackButton.Text = "BODY"
+BodyTrackButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+BodyTrackButton.Font = Enum.Font.GothamBold
+BodyTrackButton.TextSize = S(11)
+BodyTrackButton.AutoButtonColor = false
+BodyTrackButton.Parent = ControlsFrame
+Instance.new("UICorner", BodyTrackButton).CornerRadius = UDim.new(0, S(4))
+
+local CustomTrackButton = Instance.new("TextButton")
+CustomTrackButton.AnchorPoint = Vector2.new(1, 0)
+CustomTrackButton.Size = UDim2.new(0.3, 0, 0, S(22))
+CustomTrackButton.Position = UDim2.new(1, -S(14), 0, S(184))
+CustomTrackButton.Text = "CUSTOM"
+CustomTrackButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CustomTrackButton.Font = Enum.Font.GothamBold
+CustomTrackButton.TextSize = S(11)
+CustomTrackButton.AutoButtonColor = false
+CustomTrackButton.Parent = ControlsFrame
+Instance.new("UICorner", CustomTrackButton).CornerRadius = UDim.new(0, S(4))
+
+local function refreshTrackButtonColors()
+    HeadTrackButton.BackgroundColor3 = COLOR_NEITHER
+    BodyTrackButton.BackgroundColor3 = COLOR_NEITHER
+    CustomTrackButton.BackgroundColor3 = COLOR_NEITHER
+
+    if trackingMode == "Head" then
+        HeadTrackButton.BackgroundColor3 = COLOR_ON
+        BodyTrackButton.BackgroundColor3 = COLOR_OFF
+        CustomTrackButton.BackgroundColor3 = COLOR_OFF
+    elseif trackingMode == "HumanoidRootPart" then
+        HeadTrackButton.BackgroundColor3 = COLOR_OFF
+        BodyTrackButton.BackgroundColor3 = COLOR_ON
+        CustomTrackButton.BackgroundColor3 = COLOR_OFF
+    elseif trackingMode == "Custom" then
+        HeadTrackButton.BackgroundColor3 = COLOR_OFF
+        BodyTrackButton.BackgroundColor3 = COLOR_OFF
+        CustomTrackButton.BackgroundColor3 = COLOR_ON
+    end
+end
+
+local function selectTrackingMode(mode)
+    if trackingMode == mode then
+        trackingMode = nil
+    else
+        trackingMode = mode
+    end
+    refreshTrackButtonColors()
+
+    if active then
+        local center = getTrackingCenter()
+        if center then
+            orbitDistance = (camera.CFrame.Position - center).Magnitude
+            if orbitDistance < 4 then orbitDistance = 20 end
+            targetOrbitDistance = orbitDistance
+        end
+    end
+end
+
+HeadTrackButton.MouseButton1Click:Connect(function() selectTrackingMode("Head") end)
+BodyTrackButton.MouseButton1Click:Connect(function() selectTrackingMode("HumanoidRootPart") end)
+CustomTrackButton.MouseButton1Click:Connect(function() selectTrackingMode("Custom") end)
+
+local SetPivotButton = Instance.new("TextButton")
+SetPivotButton.Size = UDim2.new(1, -S(56), 0, S(22))
+SetPivotButton.Position = UDim2.new(0, S(14), 0, S(212))
+SetPivotButton.BackgroundColor3 = Color3.fromRGB(220, 200, 100)
+SetPivotButton.Text = "🚫 🎯  SET CUSTOM TARGET"
+SetPivotButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+SetPivotButton.Font = Enum.Font.GothamBold
+SetPivotButton.TextSize = S(11)
+SetPivotButton.AutoButtonColor = false
+SetPivotButton.Parent = ControlsFrame
+Instance.new("UICorner", SetPivotButton).CornerRadius = UDim.new(0, S(4))
+
+SetPivotButton.MouseButton1Click:Connect(function()
+    local rayOrigin = camera.CFrame.Position
+    local rayDirection = camera.CFrame.LookVector * 2000
+    
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    if player.Character then
+        raycastParams.FilterDescendantsInstances = {player.Character}
+    end
+    
+    local hit = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+    local targetPos
+    
+    if hit then
+        targetPos = hit.Position
+        SetPivotButton.Text = "✅  LOCKED TO TARGET!"
+        SetPivotButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    else
+        targetPos = rayOrigin + (camera.CFrame.LookVector * 50)
+        SetPivotButton.Text = "🔵 LOCKED TO AIR (50s)"
+        SetPivotButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    end
+    
+    customOrbitCenter = targetPos
+    
+    if trackingMode ~= "Custom" then
+        selectTrackingMode("Custom")
+    else
+        if active then
+            orbitDistance = (camera.CFrame.Position - targetPos).Magnitude
+            if orbitDistance < 4 then orbitDistance = 20 end
+            targetOrbitDistance = orbitDistance
+        end
+    end
+
+    task.spawn(function()
+        task.wait(1.5)
+        SetPivotButton.Text = "✅ 🔐  LOCKED TO TARGET"
+        SetPivotButton.BackgroundColor3 = Color3.fromRGB(70, 200, 55)
+    end)
+end)
+
+local ClearOrbitButton = Instance.new("TextButton")
+ClearOrbitButton.Size = UDim2.new(0, S(22), 0, S(22))
+ClearOrbitButton.Position = UDim2.new(1, -S(35), 0, S(212))
+ClearOrbitButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+ClearOrbitButton.Text = "×"
+ClearOrbitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ClearOrbitButton.Font = Enum.Font.GothamBold
+ClearOrbitButton.TextSize = S(27)
+ClearOrbitButton.AutoButtonColor = false
+ClearOrbitButton.Parent = ControlsFrame
+Instance.new("UICorner", ClearOrbitButton).CornerRadius = UDim.new(0, S(4))
+
+ClearOrbitButton.MouseButton1Click:Connect(function()
+    for id in pairs(targets) do 
+        targets[id] = nil 
+    end
+    refreshPlayerList()
+    trackingMode = nil
+    refreshTrackButtonColors()
+    SetPivotButton.Text = "🚫 🎯  SET CUSTOM TARGET"
+    SetPivotButton.BackgroundColor3 = Color3.fromRGB(220, 200, 100)
+end)
+
+refreshTrackButtonColors()
+
+-- ============================================================
+-- Section Toggles & Container Setups
+-- ============================================================
+local SlidersToggleBtn = Instance.new("TextButton")
+SlidersToggleBtn.Size = UDim2.new(1, -S(28), 0, S(28))
+SlidersToggleBtn.BackgroundColor3 = Color3.fromRGB(128, 128, 128)
+SlidersToggleBtn.Text = "▶  SLIDERS CONFIGURATION"
+SlidersToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SlidersToggleBtn.Font = Enum.Font.GothamBold
+SlidersToggleBtn.TextSize = S(12)
+SlidersToggleBtn.AutoButtonColor = false
+SlidersToggleBtn.Parent = ControlsFrame
+Instance.new("UICorner", SlidersToggleBtn).CornerRadius = UDim.new(0, S(4))
+
+local SlidersContainer = Instance.new("Frame")
+SlidersContainer.BackgroundTransparency = 1
+SlidersContainer.ClipsDescendants = true
+SlidersContainer.Parent = ControlsFrame
+
+local KeysToggleBtn = Instance.new("TextButton")
+KeysToggleBtn.Size = UDim2.new(1, -S(28), 0, S(28))
+KeysToggleBtn.BackgroundColor3 = Color3.fromRGB(128, 128, 128)
+KeysToggleBtn.Text = "▶  KEY CONFIGURATION"
+KeysToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+KeysToggleBtn.Font = Enum.Font.GothamBold
+KeysToggleBtn.TextSize = S(12)
+KeysToggleBtn.AutoButtonColor = false
+KeysToggleBtn.Parent = ControlsFrame
+Instance.new("UICorner", KeysToggleBtn).CornerRadius = UDim.new(0, S(4))
+
+local KeysContainer = Instance.new("Frame")
+KeysContainer.BackgroundTransparency = 1
+KeysContainer.ClipsDescendants = true
+KeysContainer.Parent = ControlsFrame
+
+local BottomContainer = Instance.new("Frame")
+BottomContainer.Size = UDim2.new(1, 0, 0, S(86)) 
+BottomContainer.BackgroundTransparency = 1
+BottomContainer.Parent = ControlsFrame
+
+function updateLayout(animate)
+    local time = animate and 0.3 or 0
+    local currentY = S(278) -- Start of dynamic content
+
+    -- 1. Sliders Container Calculation (Adjusted to S(490) for 9 sliders)
+    local slidersH = slidersOpen and S(490) or 0
+    local targetSlidersY = currentY
+    currentY = currentY + slidersH + (slidersOpen and S(6) or 0)
+
+    -- 2. Keys Toggle Position
+    local targetKeysToggleY = currentY
+    currentY = currentY + S(34) -- Height of Toggle button (28) + 6 padding
+
+    -- 3. Keys Container Calculation
+    local keysH = keysOpen and S(105) or 0
+    local targetKeysY = currentY
+    currentY = currentY + keysH + (keysOpen and S(6) or 0)
+
+    -- 4. Bottom Container Position
+    local targetBottomY = currentY
+    currentY = currentY + S(86) 
+
+    -- 5. Total Canvas Adjustments
+    local totalCanvasH = currentY + S(40) 
+
+    if animate then
+        TweenService:Create(SlidersContainer, TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, slidersH)}):Play()
+        TweenService:Create(KeysToggleBtn, TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(0, S(14), 0, targetKeysToggleY)}):Play()
+        TweenService:Create(KeysContainer, TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, targetKeysY), Size = UDim2.new(1, 0, 0, keysH)}):Play()
+        TweenService:Create(BottomContainer, TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, targetBottomY)}):Play()
+        if not minimized then
+            TweenService:Create(MainCanvas, TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, FULL_CANVAS_WIDTH, 0, totalCanvasH)}):Play()
+        end
+    else
+        SlidersContainer.Size = UDim2.new(1, 0, 0, slidersH)
+        KeysToggleBtn.Position = UDim2.new(0, S(14), 0, targetKeysToggleY)
+        KeysContainer.Position = UDim2.new(0, 0, 0, targetKeysY)
+        KeysContainer.Size = UDim2.new(1, 0, 0, keysH)
+        BottomContainer.Position = UDim2.new(0, 0, 0, targetBottomY)
+        if not minimized then
+            MainCanvas.Size = UDim2.new(0, FULL_CANVAS_WIDTH, 0, totalCanvasH)
+        end
+    end
+
+    SlidersToggleBtn.Text = slidersOpen and "▼  SLIDERS CONFIGURATION" or "▶  SLIDERS CONFIGURATION"
+    KeysToggleBtn.Text = keysOpen and "▼  KEY CONFIGURATION" or "▶  KEY CONFIGURATION"
+end
+
+SlidersToggleBtn.Position = UDim2.new(0, S(14), 0, S(244))
+SlidersContainer.Position = UDim2.new(0, 0, 0, S(278))
+
+SlidersToggleBtn.MouseButton1Click:Connect(function()
+    slidersOpen = not slidersOpen
+    updateLayout(true)
+end)
+
+KeysToggleBtn.MouseButton1Click:Connect(function()
+    keysOpen = not keysOpen
+    updateLayout(true)
+end)
+
+-- ============================================================
+-- Generic Slider Builder
+-- ============================================================
+local function createSliderControl(parent, yPos, opts)
+    local format = opts.format or "%.2f"
+
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(1, -S(100), 0, S(20))
+    Label.Position = UDim2.new(0, S(14), 0, yPos)
+    Label.BackgroundTransparency = 1
+    Label.Text = opts.label
+    Label.TextColor3 = Color3.fromRGB(200, 210, 230)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextSize = S(12)
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = parent
+
+    local InputBox = Instance.new("TextBox")
+    InputBox.Size = UDim2.new(0, S(60), 0, S(20))
+    InputBox.Position = UDim2.new(1, -S(74), 0, yPos)
+    InputBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    InputBox.Text = string.format(format, opts.initial) .. (opts.suffix or "")
+    InputBox.TextColor3 = Color3.fromRGB(0, 0, 0)
+    InputBox.Font = Enum.Font.GothamSemibold
+    InputBox.TextSize = S(12)
+    InputBox.ClipsDescendants = true
+    InputBox.Parent = parent
+    Instance.new("UICorner", InputBox).CornerRadius = UDim.new(0, S(10))
+
+    local BoxStroke = Instance.new("UIStroke")
+    BoxStroke.Thickness = 0
+    BoxStroke.Color = Color3.fromRGB(190, 195, 205)
+    BoxStroke.Parent = InputBox
+
+    local SliderBar = Instance.new("TextButton")
+    SliderBar.Size = UDim2.new(1, -S(28), 0, S(15))
+    SliderBar.Position = UDim2.new(0, S(14), 0, yPos + S(28))
+    SliderBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    SliderBar.Text = ""
+    SliderBar.AutoButtonColor = false
+    SliderBar.ZIndex = 1
+    SliderBar.Parent = parent
+
+    local BarStroke = Instance.new("UIStroke")
+    BarStroke.Thickness = 0
+    BarStroke.Color = Color3.fromRGB(190, 195, 205)
+    BarStroke.Parent = SliderBar
+
+    local SliderFill = Instance.new("Frame")
+    SliderFill.Size = UDim2.new((opts.initial - opts.min) / (opts.max - opts.min), 0, 1, 0)
+    SliderFill.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+    SliderFill.BorderSizePixel = 0
+    SliderFill.ZIndex = 0
+    SliderFill.Parent = SliderBar
+
+    local SliderThumb = Instance.new("Frame")
+    SliderThumb.Name = "Thumb"
+    SliderThumb.Size = UDim2.new(0, S(14), 0, S(14))
+    SliderThumb.AnchorPoint = Vector2.new(0.5, 0.5)
+    SliderThumb.Position = UDim2.new((opts.initial - opts.min) / (opts.max - opts.min), 0, 0.5, 0)
+    SliderThumb.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    SliderThumb.BorderSizePixel = 0
+    SliderThumb.ZIndex = 2
+    SliderThumb.Parent = SliderBar
+    Instance.new("UICorner", SliderThumb).CornerRadius = UDim.new(1, 0)
+
+    local ThumbStroke = Instance.new("UIStroke")
+    ThumbStroke.Thickness = 2
+    ThumbStroke.Color = Color3.fromRGB(40, 90, 180)
+    ThumbStroke.Parent = SliderThumb
+
+    local RangeLabel = Instance.new("TextLabel")
+    RangeLabel.Size = UDim2.new(1, -S(28), 0, S(14))
+    RangeLabel.Position = UDim2.new(0, S(14), 0, yPos + S(13))
+    RangeLabel.BackgroundTransparency = 1
+    RangeLabel.Text = "Min: " .. string.format(format, opts.min) .. (opts.suffix or "") .. "   Max: " .. string.format(format, opts.max) .. (opts.suffix or "")
+    RangeLabel.TextColor3 = Color3.fromRGB(140, 150, 170)
+    RangeLabel.Font = Enum.Font.Gotham
+    RangeLabel.TextSize = S(9.5)
+    RangeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    RangeLabel.Parent = parent
+
+    local currentVal = opts.initial
+
+    local function setValue(val, skipTextUpdate)
+        val = math.clamp(val, opts.min, opts.max)
+        currentVal = val
+        local pct = (val - opts.min) / (opts.max - opts.min)
+        SliderFill.Size = UDim2.new(pct, 0, 1, 0)
+        SliderThumb.Position = UDim2.new(pct, 0, 0.5, 0)
+        if not skipTextUpdate then
+            InputBox.Text = string.format(format, val) .. (opts.suffix or "")
+        end
+        opts.onChange(val)
+    end
+
+    trackConnection(InputBox.FocusLost:Connect(function()
+        local numText = InputBox.Text:gsub("[^%d%.%-]", "")
+        local num = tonumber(numText)
+        if num then
+            setValue(num)
+        else
+            InputBox.Text = string.format(format, currentVal) .. (opts.suffix or "")
+        end
+    end))
+
+    local dragging = false
+    trackConnection(SliderBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end
+    end))
+    trackConnection(UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end))
+    trackConnection(UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local mousePos = UserInputService:GetMouseLocation().X
+            local barPos = SliderBar.AbsolutePosition.X
+            local barWidth = SliderBar.AbsoluteSize.X
+            local pct = math.clamp((mousePos - barPos) / barWidth, 0, 1)
+            setValue(opts.min + (pct * (opts.max - opts.min)))
+        end
+    end))
+
+    return {
+        setValue = setValue,
+        getValue = function() return currentVal end,
+    }
+end
+
+-- Initialize Sliders
+local fovControl = createSliderControl(SlidersContainer, S(6), {
+    label = "Field of View", min = minFov, max = maxFov, initial = targetFov, format = "%.0f",
+    onChange = function(val) targetFov = val end,
+})
+
+local scrollSensitivityControl = createSliderControl(SlidersContainer, S(60), {
+    label = "Scroll Sensitivity", min = 1, max = 10, initial = scrollSensitivity, format = "%.0f",
+    onChange = function(val) scrollSensitivity = val end,
+})
+
+local forwardSpeedControl = createSliderControl(SlidersContainer, S(114), {
+    label = "Forward/Back Speed", min = minSpeed, max = maxSpeed, initial = forwardSpeed, format = "%.2f",
+    onChange = function(val) forwardSpeed = val end,
+})
+
+local sideSpeedControl = createSliderControl(SlidersContainer, S(168), {
+    label = "Left/Right Speed", min = minSpeed, max = maxSpeed, initial = sideSpeed, format = "%.2f",
+    onChange = function(val) sideSpeed = val end,
+})
+
+local verticalSpeedControl = createSliderControl(SlidersContainer, S(222), {
+    label = "Up/Down Speed", min = minVerticalSpeed, max = maxVerticalSpeed, initial = verticalSpeed, format = "%.2f",
+    onChange = function(val) verticalSpeed = val end,
+})
+
+local tiltSpeedControl = createSliderControl(SlidersContainer, S(276), {
+    label = "Tilt Speed (Z/X)", min = minTiltSpeed, max = maxTiltSpeed, initial = tiltSpeed, format = "%.0f", suffix = "°/s",
+    onChange = function(val) tiltSpeed = val end,
+})
+
+local heightOffsetControl = createSliderControl(SlidersContainer, S(330), {
+    label = "Camera Height Offset", min = minHeightOffset, max = maxHeightOffset, initial = cameraHeightOffset, format = "%.1f",
+    onChange = function(val) cameraHeightOffset = val end,
+})
+
+local mouseSmoothControl = createSliderControl(SlidersContainer, S(384), {
+    label = "Mouse Pan Smoothness", min = 1, max = 30, initial = mouseSmoothness, format = "%.0f",
+    onChange = function(val) mouseSmoothness = val end,
+})
+
+local movementSmoothControl = createSliderControl(SlidersContainer, S(438), {
+    label = "Movement Smoothness", min = 1, max = 30, initial = movementSmoothness, format = "%.0f",
+    onChange = function(val) movementSmoothness = val end,
+})
+
+-- ============================================================
+-- Keybind Selection Button Builder
+-- ============================================================
+local function createKeybindControl(parent, yPos, labelText, initialKey, onChange)
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(1, -S(100), 0, S(20))
+    Label.Position = UDim2.new(0, S(14), 0, yPos)
+    Label.BackgroundTransparency = 1
+    Label.Text = labelText
+    Label.TextColor3 = Color3.fromRGB(200, 210, 230)
+    Label.Font = Enum.Font.GothamSemibold
+    Label.TextSize = S(12)
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = parent
+
+    local BindBtn = Instance.new("TextButton")
+    BindBtn.Size = UDim2.new(0, S(70), 0, S(22))
+    BindBtn.Position = UDim2.new(1, -S(84), 0, yPos - S(1))
+    BindBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    BindBtn.Text = initialKey.Name
+    BindBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BindBtn.Font = Enum.Font.GothamBold
+    BindBtn.TextSize = S(11)
+    BindBtn.Parent = parent
+    Instance.new("UICorner", BindBtn).CornerRadius = UDim.new(0, S(20))
+
+    local connection
+    BindBtn.MouseButton1Click:Connect(function()
+        BindBtn.Text = "..."
+        BindBtn.BackgroundColor3 = Color3.fromRGB(222, 124, 126)
+        if connection then connection:Disconnect() end
+        
+        task.wait(0.1) 
+        
+        connection = UserInputService.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                if input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode ~= Enum.KeyCode.Escape then
+                    local newKey = input.KeyCode
+                    BindBtn.Text = newKey.Name
+                    BindBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+                    onChange(newKey)
+                    connection:Disconnect()
+                    connection = nil
+                end
+            end
+        end)
+    end)
+end
+
+-- Custom Keybind Interfaces (Parented to KeysContainer)
+createKeybindControl(KeysContainer, S(6), "Toggle Freecam Key", TOGGLE_KEY, function(newKey) TOGGLE_KEY = newKey end)
+createKeybindControl(KeysContainer, S(41), "Open Menu Key", MENU_KEY, function(newKey) MENU_KEY = newKey end)
+createKeybindControl(KeysContainer, S(76), "Toggle Grid Key", GRID_TOGGLE_KEY, function(newKey) GRID_TOGGLE_KEY = newKey end)
+
+-- ============================================================
+-- Clean Streamlined UI Layout (Bottom Container)
+-- ============================================================
+function toggleGridOverlay()
+    GridOverlay.Visible = not GridOverlay.Visible
+    if GridOverlay.Visible then
+        GridOverlayButton.BackgroundColor3 = Color3.fromRGB(70, 150, 55)
+        GridOverlayButton.Text = "📏 RULE OF THIRDS: ON"
+    else
+        GridOverlayButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+        GridOverlayButton.Text = "📏 RULE OF THIRDS: OFF"
+    end
+end
+
+GridOverlayButton = Instance.new("TextButton")
+GridOverlayButton.Name = "GridOverlayButton"
+GridOverlayButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
+GridOverlayButton.Position = UDim2.new(0, S(14), 0, S(6))
+GridOverlayButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+GridOverlayButton.Text = "📏 RULE OF THIRDS: OFF"
+GridOverlayButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+GridOverlayButton.Font = Enum.Font.GothamBold
+GridOverlayButton.TextSize = S(11)
+GridOverlayButton.AutoButtonColor = false
+GridOverlayButton.Parent = BottomContainer
+Instance.new("UICorner", GridOverlayButton).CornerRadius = UDim.new(0, S(6))
+GridOverlayButton.MouseButton1Click:Connect(toggleGridOverlay)
+
+-- HIDE GAME UI Logics
+local uiHidden = false
+local hiddenSavedGuis = {}
+local uiHideConnections = {}
+local originalBubbleChat = true
+local originalProximityPrompt = true 
+
+local function processOverheadHiding(char)
+    if not char then return end
+    local hum = char:WaitForChild("Humanoid", 3)
+    if hum and hum.DisplayDistanceType ~= Enum.HumanoidDisplayDistanceType.None then
+        hiddenSavedGuis[hum] = hum.DisplayDistanceType
+        hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    end
+    for _, desc in ipairs(char:GetDescendants()) do
+        if desc:IsA("BillboardGui") and desc.Enabled then
+            desc.Enabled = false
+            hiddenSavedGuis[desc] = true
+        end
+    end
+    table.insert(uiHideConnections, char.DescendantAdded:Connect(function(desc)
+        if uiHidden and desc:IsA("BillboardGui") then
+            task.defer(function()
+                if desc.Enabled then
+                    desc.Enabled = false
+                    hiddenSavedGuis[desc] = true
+                end
+            end)
+        end
+    end))
+end
+
+local ToggleGameUIButton = Instance.new("TextButton")
+ToggleGameUIButton.Name = "ToggleGameUIButton"
+ToggleGameUIButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
+ToggleGameUIButton.Position = UDim2.new(0.5, S(4), 0, S(6))
+ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+ToggleGameUIButton.Text = "🚫 HIDE GAME UI"
+ToggleGameUIButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleGameUIButton.Font = Enum.Font.GothamBold
+ToggleGameUIButton.TextSize = S(11)
+ToggleGameUIButton.AutoButtonColor = false
+ToggleGameUIButton.Parent = BottomContainer
+Instance.new("UICorner", ToggleGameUIButton).CornerRadius = UDim.new(0, S(6))
+
+ToggleGameUIButton.MouseButton1Click:Connect(function()
+    uiHidden = not uiHidden
+    if uiHidden then
+        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
+        pcall(function()
+            local tcs = game:GetService("TextChatService")
+            if tcs:FindFirstChild("BubbleChatConfiguration") then
+                originalBubbleChat = tcs.BubbleChatConfiguration.Enabled
+                tcs.BubbleChatConfiguration.Enabled = false
+            end
+        end)
+        
+        pcall(function()
+            local pps = game:GetService("ProximityPromptService")
+            originalProximityPrompt = pps.Enabled
+            pps.Enabled = false
+        end)
+        
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Name ~= "FreecamUI" and gui.Enabled then
+                gui.Enabled = false
+                hiddenSavedGuis[gui] = true
+            end
+        end
+        table.insert(uiHideConnections, playerGui.ChildAdded:Connect(function(gui)
+            if uiHidden and gui:IsA("ScreenGui") and gui.Name ~= "FreecamUI" then
+                task.defer(function()
+                    if gui.Enabled then
+                        gui.Enabled = false
+                        hiddenSavedGuis[gui] = true
+                    end
+                end)
+            end
+        end))
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then processOverheadHiding(p.Character) end
+            table.insert(uiHideConnections, p.CharacterAdded:Connect(processOverheadHiding))
+        end
+        table.insert(uiHideConnections, Players.PlayerAdded:Connect(function(p)
+            table.insert(uiHideConnections, p.CharacterAdded:Connect(processOverheadHiding))
+        end))
+        ToggleGameUIButton.Text = "✅ GAME UI HIDDEN"
+        ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(70, 150, 55)
+    else
+        for _, conn in ipairs(uiHideConnections) do pcall(function() conn:Disconnect() end) end
+        uiHideConnections = {}
+        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
+        pcall(function()
+            local tcs = game:GetService("TextChatService")
+            if tcs:FindFirstChild("BubbleChatConfiguration") then tcs.BubbleChatConfiguration.Enabled = originalBubbleChat end
+        end)
+        
+        pcall(function()
+            local pps = game:GetService("ProximityPromptService")
+            pps.Enabled = originalProximityPrompt
+        end)
+        
+        for obj, val in pairs(hiddenSavedGuis) do
+            if obj and obj.Parent then
+                if obj:IsA("Humanoid") then obj.DisplayDistanceType = val else obj.Enabled = true end
+            end
+        end
+        hiddenSavedGuis = {}
+        ToggleGameUIButton.Text = "🚫 HIDE GAME UI"
+        ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+    end
+end)
+
+local ResetCameraButton = Instance.new("TextButton")
+ResetCameraButton.Name = "ResetCameraButton"
+ResetCameraButton.Size = UDim2.new(1, -S(28), 0, S(32))
+ResetCameraButton.Position = UDim2.new(0, S(14), 0, S(44))
+ResetCameraButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+ResetCameraButton.Text = "📸 RESET CAMERA"
+ResetCameraButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ResetCameraButton.Font = Enum.Font.GothamBold
+ResetCameraButton.TextSize = S(11)
+ResetCameraButton.AutoButtonColor = false
+ResetCameraButton.Parent = BottomContainer
+Instance.new("UICorner", ResetCameraButton).CornerRadius = UDim.new(0, S(6))
+
+ResetCameraButton.MouseButton1Click:Connect(function()
+    resetCameraOrbit()
+    fovControl.setValue(70) 
+    local originalText = ResetCameraButton.Text
+    ResetCameraButton.Text = "✅ CAMERA RESET"
+    task.spawn(function()
+        task.wait(1)
+        ResetCameraButton.Text = originalText
+    end)
+end)
+
+updateLayout(false)
+
+-- Instructions Pane Setup
+local GuideScroller = Instance.new("ScrollingFrame")
+GuideScroller.Size = UDim2.new(0.9, 0, 0.8, 0)
+GuideScroller.Position = UDim2.new(0.05, 0, 0.02, 0)
+GuideScroller.BackgroundColor3 = Color3.fromRGB(8, 9, 13)
+GuideScroller.BorderSizePixel = 0
+GuideScroller.CanvasSize = UDim2.new(0, 0, 0, S(420))
+GuideScroller.ScrollBarThickness = S(4)
+GuideScroller.ScrollBarImageColor3 = Color3.fromRGB(45, 55, 80)
+GuideScroller.Parent = InstructionsFrame
+
+local GuideCorner = Instance.new("UICorner")
+GuideCorner.CornerRadius = UDim.new(0, S(6))
+GuideCorner.Parent = GuideScroller
+
+local GuideStroke = Instance.new("UIStroke")
+GuideStroke.Thickness = 1
+GuideStroke.Color = Color3.fromRGB(255, 255, 255)
+GuideStroke.Parent = GuideScroller
+applyBorderGradient(GuideStroke)
+
+local GuideText = Instance.new("TextLabel")
+GuideText.Size = UDim2.new(1, -S(16), 1, 0)
+GuideText.Position = UDim2.new(0, S(8), 0, S(5))
+GuideText.BackgroundTransparency = 1
+GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
+"• <b>Toggle Key</b> : Turn Freecam On/Off (Rebindable in panel)\n" ..
+"• <b>Menu Key</b> : Open/Close this layout (Rebindable in panel)\n" ..
+"• <b>Grid Toggle Key</b> : Turn Rule of Thirds On/Off (Rebindable in panel)\n\n" ..
+"<b>[ORBIT CONTROL MOVEMENTS]</b>\n" ..
+"• <b>A / D</b> : Orbit Left / Right around targets\n" ..
+"• <b>E / Q</b> : Orbit Vertically Up / Down\n" ..
+"• <b>W / S</b> : Zoom Camera Distance In / Out\n" ..
+"• <b>Hold Left Shift</b> : 2.0x Speed boost to orbit panning\n" ..
+"• <b>Hold Left Ctrl</b> : 2.0x Speed reduction for precise control\n" ..
+"• <b>Hold Right Click</b> : Lock Cursor & Look Around\n" ..
+"• <b>Left Click (On Character)</b> : Instantly snap orbit to that character.\n" ..
+"• <b>Z / X</b> : Tilt Camera Left / Right (unlimited rotation)\n" ..
+"• <b>C</b> : Reset Camera Tilt to 0°\n\n" ..
+"<b>[SPEED MODIFIERS & SLIDERS]</b>\n" ..
+"• <b>] (Right Bracket)</b> : Increase default speeds\n" ..
+"• <b>[ (Left Bracket)</b> : Decrease default speeds\n" ..
+"• <b>Camera Height Offset</b> slider shifts the framing up/down.\n" ..
+"• While Freecam is active, WASD only moves the camera.\n" ..
+"• <b>Mouse Scroll Wheel</b> : Smooth FOV Zoom in/out.\n" ..
+"• <b>Scroll Sensitivity</b> slider : Adjust degrees per scroll notch (1 to 10).\n" ..
+"• <b>Tracking Point</b> buttons : Head, Body, or Custom Point toggles.\n" ..
+"• <b>🎯 Set Custom Pivot</b> : Raycasts directly forward from the center of your screen to lock orbit onto a specific prop, wall, or floor.\n" ..
+"• <b>× Button (Next to Pivot)</b> : Instantly clears targets/pivots and returns to free-fly mode.\n" ..
+"• A green/gray dot + <b>FREECAM: ON/OFF</b> label near the top shows\n" ..
+"  whether Freecam mode is currently active.\n" ..
+"• <b>Turn ON/OFF</b> button : Toggles Freecam without using your keybind.\n" ..
+"• <b>Search bar</b> : Type part of a username to filter the roster below.\n" ..
+"• Selecting a player automatically moves the camera to frame them.\n\n" ..
+"<b>[PANEL CONTROLS]</b>\n" ..
+"• <b>▼ CONFIGURATION MENUS</b> : Toggle the center layouts open/closed.\n" ..
+"• <b>–</b> button : Minimize the panel down to just the title bar.\n" ..
+"• <b>?</b> button : Toggle this instructions view.\n" ..
+"• <b>×</b> button : Close the panel.\n" ..
+"• <b>🚫 HIDE GAME UI</b> button : Hides all game menus, hotbars, overhead names, chat bubbles, voice icons, and default Roblox icons.\n" ..
+"• <b>📏 Rule of Thirds</b> button : Toggles a 3x3 framing grid and crosshair.\n" ..
+"• <b>⟲ Reset Camera</b> button : If a player is selected, snaps the\n" ..
+"  camera back to its original framing near that character.\n\n" ..
+"<b>[CINEMATIC PLAYER TRACKING]</b>\n" ..
+"Select single or multiple players from the panel roster. The camera will dynamically compute the fluid midpoint tracking position seamlessly."
+GuideText.TextColor3 = Color3.fromRGB(200, 210, 230)
+GuideText.Font = Enum.Font.Gotham
+GuideText.TextSize = S(11)
+GuideText.TextWrapped = true
+GuideText.RichText = true
+GuideText.TextYAlignment = Enum.TextYAlignment.Top
+GuideText.TextXAlignment = Enum.TextXAlignment.Left
+GuideText.Parent = GuideScroller
+
+local ReturnButton = Instance.new("TextButton")
+ReturnButton.Size = UDim2.new(0.9, 0, 0.12, 0)
+ReturnButton.Position = UDim2.new(0.05, 0, 0.85, 0)
+ReturnButton.BackgroundColor3 = Color3.fromRGB(25, 35, 55)
+ReturnButton.Text = "Back to Panel"
+ReturnButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ReturnButton.Font = Enum.Font.GothamBold
+ReturnButton.TextSize = S(11)
+ReturnButton.Parent = InstructionsFrame
+
+local ReturnCorner = Instance.new("UICorner")
+ReturnCorner.CornerRadius = UDim.new(0, S(4))
+ReturnCorner.Parent = ReturnButton
+
+ReturnButton.MouseButton1Click:Connect(function()
+    showingInstructions = false
+    InstructionsFrame.Visible = false
+    ControlsFrame.Visible = true
+    updateLayout(true)
+end)
+
+-- Pop-up Tracking Status Notification Card
+local NotificationFrame = Instance.new("Frame")
+NotificationFrame.Name = "NotificationFrame"
+NotificationFrame.Size = UDim2.new(0, 280, 0, 65)
+NotificationFrame.Position = UDim2.new(1, 300, 1, -85) 
+NotificationFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+NotificationFrame.BorderSizePixel = 0
+NotificationFrame.Parent = ScreenGui
+
+applyDarkGradient(NotificationFrame)
+
+local NotifCorner = Instance.new("UICorner")
+NotifCorner.CornerRadius = UDim.new(0, 6)
+NotifCorner.Parent = NotificationFrame
+
+local NotifStroke = Instance.new("UIStroke")
+NotifStroke.Thickness = 1.5
+NotifStroke.Color = Color3.fromRGB(255, 255, 255)
+NotifStroke.Parent = NotificationFrame
+applyBorderGradient(NotifStroke)
+
+local NotifText = Instance.new("TextLabel")
+NotifText.Size = UDim2.new(1, -20, 1, 0)
+NotifText.Position = UDim2.new(0, 10, 0, 0)
+NotifText.BackgroundTransparency = 1
+NotifText.Text = "<b>Freecam Loaded!</b>\nCheck the panel [<b>?</b>] for instructions.\nYou can rebind keys at the bottom of the list."
+NotifText.TextColor3 = Color3.fromRGB(215, 225, 245)
+NotifText.Font = Enum.Font.Gotham
+NotifText.TextSize = 12
+NotifText.RichText = true
+NotifText.TextWrapped = true
+NotifText.Parent = NotificationFrame
+
+local savedWalkSpeed = 16
+local savedJumpPower = 50
+
+local function getHumanoid()
+    local character = player.Character
+    if not character then return nil end
+    return character:FindFirstChildOfClass("Humanoid")
+end
+
+local function getHumanoidRootPart()
+    local character = player.Character
+    if not character then return nil end
+    return character:FindFirstChild("HumanoidRootPart")
+end
+
+local function setMovementEnabled(enabled)
+    pcall(function()
+        local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule", 5))
+        if PlayerModule then
+            local controls = PlayerModule:GetControls()
+            if enabled then controls:Enable() else controls:Disable() end
+        end
+    end)
+
+    local humanoid = getHumanoid()
+    local hrp = getHumanoidRootPart()
+
+    if enabled then
+        if humanoid then
+            humanoid.WalkSpeed = savedWalkSpeed
+            humanoid.JumpPower = savedJumpPower
+        end
+        if hrp then hrp.Anchored = false end 
+    else
+        if humanoid then
+            savedWalkSpeed = humanoid.WalkSpeed
+            savedJumpPower = humanoid.JumpPower
+            humanoid.WalkSpeed = 0
+            humanoid.JumpPower = 0
+        end
+        if hrp then hrp.Anchored = true end 
+    end
+end
+
+function getTrackingCenter()
+    if trackingMode == nil then return nil end
+    
+    if trackingMode == "Custom" then
+        return customOrbitCenter
+    end
+    
+    local activePositions = {}
+    for id, p in pairs(targets) do
+        if p and p.Parent == Players and p.Character then
+            local part = p.Character:FindFirstChild(trackingMode)
+            if part then
+                table.insert(activePositions, part.Position)
+            end
+        end
+    end
+    
+    if #activePositions > 0 then
+        local trackingCenter = Vector3.new(0, 0, 0)
+        for _, pos in ipairs(activePositions) do
+            trackingCenter = trackingCenter + pos
+        end
+        return trackingCenter / #activePositions
+    end
+    return nil
+end
+
+local DEFAULT_ORBIT_DISTANCE = 12
+local DEFAULT_ROTATION_Y = -12
+
+local function snapCameraToTarget(resetAngles)
+    if not active then return end
+    local center = getTrackingCenter()
+    if not center then return end
+
+    camera.CameraType = Enum.CameraType.Scriptable
+
+    if resetAngles then
+        targetRotationX = 0
+        targetRotationY = DEFAULT_ROTATION_Y
+        rotationZ = 0
+    end
+    rotationX = targetRotationX
+    rotationY = targetRotationY
+    targetOrbitDistance = DEFAULT_ORBIT_DISTANCE
+    orbitDistance = DEFAULT_ORBIT_DISTANCE
+
+    local framedCenter = center + Vector3.new(0, cameraHeightOffset, 0)
+    local rotationMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0) * CFrame.Angles(0, 0, math.rad(rotationZ))
+    local targetPos = framedCenter + (rotationMatrix * Vector3.new(0, 0, orbitDistance))
+
+    camCFrame = CFrame.new(targetPos) * rotationMatrix
+    camera.CFrame = camCFrame
+end
+
+function resetCameraOrbit()
+    if not active then return end
+    camera.CameraType = Enum.CameraType.Scriptable
+
+    local center = getTrackingCenter()
+    if center then
+        snapCameraToTarget(true)
+        return
+    end
+
+    local rx, ry, _ = camera.CFrame:ToEulerAnglesYXZ()
+    local newRotX = math.deg(ry)
+    local newRotY = math.deg(rx)
+    if newRotX ~= newRotX then newRotX = 0 end 
+    if newRotY ~= newRotY then newRotY = 0 end 
+    targetRotationX = newRotX
+    targetRotationY = math.clamp(newRotY, -85, 85)
+    
+    rotationX = targetRotationX
+    rotationY = targetRotationY
+    rotationZ = 0
+
+    camCFrame = camera.CFrame
+    targetOrbitDistance = 20
+    orbitDistance = 20
+end
+
+function refreshPlayerList()
+    for _, child in ipairs(PlayerList:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+    
+    for _, p in ipairs(Players:GetPlayers()) do
+        if searchQuery == "" or p.Name:lower():find(searchQuery, 1, true) or p.DisplayName:lower():find(searchQuery, 1, true) then
+        local isCurrentlySelected = (targets[p.UserId] ~= nil)
+        
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -S(12), 0, S(30))
+        btn.Text = "  " .. p.DisplayName .. " (@" .. p.Name .. ")"
+        
+        btn.TextColor3 = isCurrentlySelected and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(195, 200, 210)
+        btn.Font = isCurrentlySelected and Enum.Font.GothamBold or Enum.Font.Gotham
+        btn.TextSize = S(11)
+        btn.TextXAlignment = Enum.TextXAlignment.Left
+        btn.BorderSizePixel = 0
+        btn.Parent = PlayerList
+        
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, S(4))
+        btnCorner.Parent = btn
+
+        local btnStroke = Instance.new("UIStroke")
+        btnStroke.Thickness = isCurrentlySelected and 1.5 or 1
+        btnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        btnStroke.Parent = btn
+
+        if isCurrentlySelected then
+            btn.BackgroundColor3 = Color3.fromRGB(46, 57, 92) 
+            btnStroke.Color = Color3.fromRGB(80, 140, 255)    
+        else
+            btn.BackgroundColor3 = Color3.fromRGB(22, 25, 38)                              
+            applyBorderGradient(btnStroke)                       
+        end
+
+        btn.MouseButton1Click:Connect(function()
+            if targets[p.UserId] then
+                targets[p.UserId] = nil
+                btn.TextColor3 = Color3.fromRGB(195, 200, 210)
+                btn.Font = Enum.Font.Gotham
+                
+                local grad = btn:FindFirstChildOfClass("UIGradient")
+                if grad then grad:Destroy() end
+                btnStroke:Destroy()
+
+                btn.BackgroundColor3 = Color3.fromRGB(22, 25, 38)
+                
+                btnStroke = Instance.new("UIStroke")
+                btnStroke.Thickness = 1
+                btnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                btnStroke.Parent = btn
+                applyBorderGradient(btnStroke)
+            else
+                targets[p.UserId] = p
+                btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+                btn.Font = Enum.Font.GothamBold
+                
+                local grad = btn:FindFirstChildOfClass("UIGradient")
+                if grad then grad:Destroy() end 
+                
+                btn.BackgroundColor3 = Color3.fromRGB(46, 57, 92)
+                btnStroke.Color = Color3.fromRGB(80, 140, 255)
+                btnStroke.Thickness = 1.5
+                
+                trackingMode = "HumanoidRootPart"
+                refreshTrackButtonColors()
+                fovControl.setValue(70) 
+                
+                snapCameraToTarget(false)
+            end
+        end)
+        end
+    end
+    PlayerList.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + S(12))
+end
+
+trackConnection(Players.PlayerAdded:Connect(refreshPlayerList))
+trackConnection(Players.PlayerRemoving:Connect(function(p) targets[p.UserId] = nil; refreshPlayerList() end))
+
+function toggleFreecam()
+    active = not active
+    updateStatusIndicator()
+    if active then
+        savedDefaultFov = camera.FieldOfView
+        setMovementEnabled(false)
+        camera.CameraType = Enum.CameraType.Scriptable
+        camCFrame = camera.CFrame
+
+        for k, _ in pairs(smoothedMovement) do smoothedMovement[k] = 0 end
+
+        local rx, ry, _ = camera.CFrame:ToEulerAnglesYXZ()
+        targetRotationX = math.deg(ry)
+        targetRotationY = math.clamp(math.deg(rx), -85, 85)
+        rotationX = targetRotationX
+        rotationY = targetRotationY
+
+        local center = getTrackingCenter()
+        if center then
+            orbitDistance = (camera.CFrame.Position - center).Magnitude
+            if orbitDistance < 4 then orbitDistance = 20 end
+            targetOrbitDistance = orbitDistance
+        end
+    else
+        setMovementEnabled(true)
+        camera.CameraType = Enum.CameraType.Custom
+        camera.FieldOfView = savedDefaultFov
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    end
+end
+
+-- Handle Inputs
+trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
+    if active then
+        if input.KeyCode == SPEED_UP_KEY then
+            forwardSpeedControl.setValue(forwardSpeedControl.getValue() + speedStep)
+            sideSpeedControl.setValue(sideSpeedControl.getValue() + speedStep)
+            return
+        elseif input.KeyCode == SPEED_DOWN_KEY then
+            forwardSpeedControl.setValue(forwardSpeedControl.getValue() - speedStep)
+            sideSpeedControl.setValue(sideSpeedControl.getValue() - speedStep)
+            return
+        end
+    end
+
+    if processed then return end
+    
+    if input.KeyCode == MENU_KEY then
+        menuVisible = not menuVisible
+        toggleMenu(menuVisible)
+    end
+    
+    if input.KeyCode == TOGGLE_KEY then
+        toggleFreecam()
+    end
+
+    if input.KeyCode == GRID_TOGGLE_KEY then
+        toggleGridOverlay()
+    end
+    
+    if active then
+        if input.KeyCode == Enum.KeyCode.W then movement.W = 1 end
+        if input.KeyCode == Enum.KeyCode.S then movement.S = 1 end
+        if input.KeyCode == Enum.KeyCode.A then movement.A = 1 end
+        if input.KeyCode == Enum.KeyCode.D then movement.D = 1 end
+        if input.KeyCode == Enum.KeyCode.E then movement.E = 1 end 
+        if input.KeyCode == Enum.KeyCode.Q then movement.Q = 1 end 
+        if input.KeyCode == Enum.KeyCode.Z then movement.Z = 1 end
+        if input.KeyCode == Enum.KeyCode.X then movement.X = 1 end
+        if input.KeyCode == Enum.KeyCode.C then rotationZ = 0 end
+        
+        -- Click to Target Character Feature
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local mouseLocation = UserInputService:GetMouseLocation()
+            local insetY = GuiService:GetGuiInset().Y
+            local ray = camera:ViewportPointToRay(mouseLocation.X, mouseLocation.Y - insetY)
+            
+            local raycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+            if player.Character then
+                raycastParams.FilterDescendantsInstances = {player.Character}
+            end
+            
+            local hit = workspace:Raycast(ray.Origin, ray.Direction * 2000, raycastParams)
+            if hit and hit.Instance then
+                local model = hit.Instance:FindFirstAncestorOfClass("Model")
+                
+                if model and model:FindFirstChildOfClass("Humanoid") then
+                    local targetPlayer = Players:GetPlayerFromCharacter(model)
+                    
+                    if targetPlayer then
+                        for id in pairs(targets) do 
+                            targets[id] = nil 
+                        end
+                        
+                        targets[targetPlayer.UserId] = targetPlayer
+                        refreshPlayerList()
+                        
+                        trackingMode = "HumanoidRootPart"
+                        refreshTrackButtonColors()
+                        snapCameraToTarget(false)
+                    else
+                        local focusPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head") or hit.Instance
+                        customOrbitCenter = focusPart.Position
+                        
+                        trackingMode = "Custom"
+                        refreshTrackButtonColors()
+                        snapCameraToTarget(false)
+                    end
+                end
+            end
+        end
+    end
+end))
+
+trackConnection(UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.W then movement.W = 0 end
+    if input.KeyCode == Enum.KeyCode.S then movement.S = 0 end
+    if input.KeyCode == Enum.KeyCode.A then movement.A = 0 end
+    if input.KeyCode == Enum.KeyCode.D then movement.D = 0 end
+    if input.KeyCode == Enum.KeyCode.E then movement.E = 0 end
+    if input.KeyCode == Enum.KeyCode.Q then movement.Q = 0 end
+    if input.KeyCode == Enum.KeyCode.Z then movement.Z = 0 end
+    if input.KeyCode == Enum.KeyCode.X then movement.X = 0 end
+end))
+
+trackConnection(UserInputService.InputChanged:Connect(function(input)
+    if not active then return end
+    if input.UserInputType == Enum.UserInputType.MouseWheel then
+        -- Smoothly changes the FOV slider value dynamically driven by scrollSensitivity
+        fovControl.setValue(fovControl.getValue() - (input.Position.Z * scrollSensitivity))
+    end
+end))
+
+-- Main Loop Runtime
+getgenv().IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(function(dt)
+    if not active then return end
+
+    -- Applies that exact smoothness value to the camera's FOV zoom transition globally
+    local fovLerpSpeed = math.clamp(movementSmoothness, 1, 30)
+    camera.FieldOfView = camera.FieldOfView + (targetFov - camera.FieldOfView) * math.clamp(dt * fovLerpSpeed, 0, 1)
+
+    local isPanActive = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    if isPanActive then
+        UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+        local delta = UserInputService:GetMouseDelta()
+        targetRotationX = targetRotationX - (delta.X * sensitivity)
+        targetRotationY = math.clamp(targetRotationY - (delta.Y * sensitivity), -85, 85)
+    else
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    end
+    
+    local currentForwardSpeed = tonumber(forwardSpeed) or 1.0
+    local currentSideSpeed = tonumber(sideSpeed) or 1.0
+
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+        currentForwardSpeed = currentForwardSpeed * shiftMultiplier
+        currentSideSpeed = currentSideSpeed * shiftMultiplier
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        currentForwardSpeed = currentForwardSpeed / slowMultiplier
+        currentSideSpeed = currentSideSpeed / slowMultiplier
+    end
+
+    -- GLIDE / SMOOTH INPUT LOGIC
+    local moveLerp = math.clamp(movementSmoothness, 1, 30)
+    local lerpAlpha = math.clamp(dt * moveLerp, 0, 1)
+    
+    smoothedMovement.W = smoothedMovement.W + (movement.W - smoothedMovement.W) * lerpAlpha
+    smoothedMovement.S = smoothedMovement.S + (movement.S - smoothedMovement.S) * lerpAlpha
+    smoothedMovement.A = smoothedMovement.A + (movement.A - smoothedMovement.A) * lerpAlpha
+    smoothedMovement.D = smoothedMovement.D + (movement.D - smoothedMovement.D) * lerpAlpha
+    smoothedMovement.E = smoothedMovement.E + (movement.E - smoothedMovement.E) * lerpAlpha
+    smoothedMovement.Q = smoothedMovement.Q + (movement.Q - smoothedMovement.Q) * lerpAlpha
+    smoothedMovement.Z = smoothedMovement.Z + (movement.Z - smoothedMovement.Z) * lerpAlpha
+    smoothedMovement.X = smoothedMovement.X + (movement.X - smoothedMovement.X) * lerpAlpha
+
+    rotationZ = rotationZ + (tiltSpeed * dt * (smoothedMovement.Z - smoothedMovement.X))
+
+    local trackingCenter = getTrackingCenter()
+    
+    if trackingCenter then
+        local sideAngularSpeed = currentSideSpeed * 65 * dt 
+        local forwardZoomSpeed = currentForwardSpeed * 10 * dt
+        local verticalAngularSpeed = sideAngularSpeed * verticalSpeed
+        
+        -- W/S inputs adjust physical target distance smoothly
+        targetOrbitDistance = math.max(targetOrbitDistance + (forwardZoomSpeed * (smoothedMovement.S - smoothedMovement.W)), 2)
+        
+        -- Interpolate physical orbit zoom using movement smoothness parameter
+        local distanceLerpSpeed = math.clamp(movementSmoothness, 1, 30)
+        orbitDistance = orbitDistance + (targetOrbitDistance - orbitDistance) * math.clamp(dt * distanceLerpSpeed, 0, 1)
+
+        -- Apply smoothed Orbiting (Tracking Mode)
+        targetRotationX = targetRotationX + (sideAngularSpeed * (smoothedMovement.D - smoothedMovement.A))
+        targetRotationY = math.clamp(targetRotationY + (verticalAngularSpeed * (smoothedMovement.Q - smoothedMovement.E)), -85, 85)
+    end
+
+    local panLerpSpeed = math.clamp(mouseSmoothness, 1, 30)
+    rotationX = rotationX + (targetRotationX - rotationX) * math.clamp(dt * panLerpSpeed, 0, 1)
+    rotationY = rotationY + (targetRotationY - rotationY) * math.clamp(dt * panLerpSpeed, 0, 1)
+
+    local rotationMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0) * CFrame.Angles(0, 0, math.rad(rotationZ))
+
+    if trackingCenter then
+        local framedCenter = trackingCenter + Vector3.new(0, cameraHeightOffset, 0)
+        local targetPos = framedCenter + (rotationMatrix * Vector3.new(0, 0, orbitDistance))
+        
+        camCFrame = CFrame.new(targetPos) * rotationMatrix
+        
+        local mappedLerpSpeed = 31 - math.clamp(smoothingWeight, 1, 30)
+        camera.CFrame = camera.CFrame:Lerp(camCFrame, math.clamp(dt * mappedLerpSpeed, 0, 1))
+    else
+        -- Standard Free Fly Mode using the smoothed directional input
+        local horizontalDirection = Vector3.new((smoothedMovement.D - smoothedMovement.A) * currentSideSpeed, 0, (smoothedMovement.S - smoothedMovement.W) * currentForwardSpeed)
+        local moveMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0)
+        
+        local moveVector = moveMatrix:VectorToWorldSpace(horizontalDirection) * (15 * dt)
+        moveVector = moveVector + Vector3.new(0, (smoothedMovement.E - smoothedMovement.Q) * (currentForwardSpeed * verticalSpeed * 15 * dt), 0)
+        camCFrame = camCFrame + moveVector
+        
+        local rawTargetCFrame = CFrame.new(camCFrame.Position) * rotationMatrix
+        if isPanActive then
+            camera.CFrame = rawTargetCFrame
+        else
+            camera.CFrame = camera.CFrame:Lerp(rawTargetCFrame, math.clamp(dt * 15, 0, 1))
+        end
+    end
+end))
+
+-- Notification Slide-In
+task.spawn(function()
+    task.wait(0.5)
+    TweenService:Create(NotificationFrame, TweenInfo.new(0.6, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out), {
+        Position = UDim2.new(1, -295, 1, -85)
+    }):Play()
+    
+    task.wait(5.0)
+    
+    local closeTween = TweenService:Create(NotificationFrame, TweenInfo.new(0.6, Enum.EasingStyle.Cubic, Enum.EasingDirection.In), {
+        Position = UDim2.new(1, 300, 1, -85)
+    })
+    closeTween:Play()
+    closeTween.Completed:Connect(function() NotificationFrame:Destroy() end)
+end)
