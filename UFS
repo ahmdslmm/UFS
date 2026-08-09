@@ -59,13 +59,14 @@ local function S(n) return math.floor(n * SCALE + 0.5) end
 
 -- Configuration Keys 
 local TOGGLE_KEY = Enum.KeyCode.T     
-local MENU_KEY = Enum.KeyCode.F 
+local MENU_KEY = Enum.KeyCode.LeftControl 
 local GRID_TOGGLE_KEY = Enum.KeyCode.V       
 local SPEED_DOWN_KEY = Enum.KeyCode.LeftBracket  
 local SPEED_UP_KEY = Enum.KeyCode.RightBracket   
 
 -- State variables
 local active = false
+local mouseLocked = false
 local menuVisible = false
 local showingInstructions = false
 local minimized = false
@@ -248,7 +249,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -S(122), 0, S(35))
 Title.Position = UDim2.new(0, S(14), 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "UFS by @kuwcinggg"
+Title.Text = "CFS by @kuwcinggg"
 Title.TextColor3 = Color3.fromRGB(230, 235, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = S(13)
@@ -1192,8 +1193,9 @@ GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
 "• <b>A / D</b> : Orbit Left / Right around targets\n" ..
 "• <b>E / Q</b> : Orbit Vertically Up / Down\n" ..
 "• <b>W / S</b> : Zoom Camera Distance In / Out\n" ..
-"• <b>Hold Left Shift</b> : 2.0x Speed boost to orbit panning\n" ..
+"• <b>Hold Left Shift</b> : Mouse lock toggle / speed boost\n" ..
 "• <b>Hold Left Ctrl</b> : 2.0x Speed reduction for precise control\n" ..
+"• <b>Shift Key</b> : Toggle Mouse Lock (No RMB holding needed)\n" ..
 "• <b>Hold Right Click</b> : Lock Cursor & Look Around\n" ..
 "• <b>Left Click (On Character)</b> : Instantly snap orbit to that character.\n" ..
 "• <b>Z / X</b> : Tilt Camera Left / Right (unlimited rotation)\n" ..
@@ -1496,6 +1498,7 @@ trackConnection(Players.PlayerRemoving:Connect(function(p) targets[p.UserId] = n
 
 function toggleFreecam()
     active = not active
+    mouseLocked = false
     updateStatusIndicator()
     if active then
         savedDefaultFov = camera.FieldOfView
@@ -1536,6 +1539,8 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
             forwardSpeedControl.setValue(forwardSpeedControl.getValue() - speedStep)
             sideSpeedControl.setValue(sideSpeedControl.getValue() - speedStep)
             return
+        elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
+            mouseLocked = not mouseLocked
         end
     end
 
@@ -1636,7 +1641,7 @@ getgenv().IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(fu
     local fovLerpSpeed = math.clamp(movementSmoothness, 1, 30)
     camera.FieldOfView = camera.FieldOfView + (targetFov - camera.FieldOfView) * math.clamp(dt * fovLerpSpeed, 0, 1)
 
-    local isPanActive = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    local isPanActive = mouseLocked or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
     if isPanActive then
         UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
         local delta = UserInputService:GetMouseDelta()
