@@ -49,6 +49,7 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local GuiService = game:GetService("GuiService")
 local StarterGui = game:GetService("StarterGui")
+local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -59,8 +60,10 @@ local function S(n) return math.floor(n * SCALE + 0.5) end
 
 -- Configuration Keys 
 local TOGGLE_KEY = Enum.KeyCode.T     
-local MENU_KEY = Enum.KeyCode.LeftControl 
-local GRID_TOGGLE_KEY = Enum.KeyCode.V       
+local MENU_KEY = Enum.KeyCode.F 
+local HIDE_UI_KEY = Enum.KeyCode.B
+local GRID_TOGGLE_KEY = Enum.KeyCode.V
+local TOGGLE_FOG_KEY = Enum.KeyCode.N       
 local SPEED_DOWN_KEY = Enum.KeyCode.LeftBracket  
 local SPEED_UP_KEY = Enum.KeyCode.RightBracket   
 
@@ -191,7 +194,7 @@ crossHairH.BorderSizePixel = 0
 -- Dynamic Canvas Dimensions
 local FULL_CANVAS_WIDTH = S(360) 
 local HEADER_HEIGHT = S(35)
-local INSTRUCTIONS_HEIGHT = S(530)
+local INSTRUCTIONS_HEIGHT = S(550)
 
 local slidersOpen = false -- Set to false by default so sliders menu starts collapsed
 local keysOpen = false 
@@ -707,7 +710,7 @@ function updateLayout(animate)
     local time = animate and 0.3 or 0
     local currentY = S(278) -- Start of dynamic content
 
-    -- 1. Sliders Container Calculation (Adjusted to S(490) for 9 sliders)
+    -- 1. Sliders Container Calculation
     local slidersH = slidersOpen and S(490) or 0
     local targetSlidersY = currentY
     currentY = currentY + slidersH + (slidersOpen and S(6) or 0)
@@ -716,8 +719,8 @@ function updateLayout(animate)
     local targetKeysToggleY = currentY
     currentY = currentY + S(34) -- Height of Toggle button (28) + 6 padding
 
-    -- 3. Keys Container Calculation
-    local keysH = keysOpen and S(105) or 0
+    -- 3. Keys Container Calculation (Adjusted to accommodate 5 keys)
+    local keysH = keysOpen and S(175) or 0
     local targetKeysY = currentY
     currentY = currentY + keysH + (keysOpen and S(6) or 0)
 
@@ -991,7 +994,9 @@ end
 -- Custom Keybind Interfaces (Parented to KeysContainer)
 createKeybindControl(KeysContainer, S(6), "Toggle Freecam Key", TOGGLE_KEY, function(newKey) TOGGLE_KEY = newKey end)
 createKeybindControl(KeysContainer, S(41), "Open Menu Key", MENU_KEY, function(newKey) MENU_KEY = newKey end)
-createKeybindControl(KeysContainer, S(76), "Toggle Grid Key", GRID_TOGGLE_KEY, function(newKey) GRID_TOGGLE_KEY = newKey end)
+createKeybindControl(KeysContainer, S(76), "Hide Game UI Key", HIDE_UI_KEY, function(newKey) HIDE_UI_KEY = newKey end)
+createKeybindControl(KeysContainer, S(111), "Toggle Grid Key", GRID_TOGGLE_KEY, function(newKey) GRID_TOGGLE_KEY = newKey end)
+createKeybindControl(KeysContainer, S(146), "Toggle Fog Key", TOGGLE_FOG_KEY, function(newKey) TOGGLE_FOG_KEY = newKey end)
 
 -- ============================================================
 -- Clean Streamlined UI Layout (Bottom Container)
@@ -1066,7 +1071,7 @@ ToggleGameUIButton.AutoButtonColor = false
 ToggleGameUIButton.Parent = BottomContainer
 Instance.new("UICorner", ToggleGameUIButton).CornerRadius = UDim.new(0, S(6))
 
-ToggleGameUIButton.MouseButton1Click:Connect(function()
+local function toggleHideUI()
     uiHidden = not uiHidden
     if uiHidden then
         pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
@@ -1132,12 +1137,70 @@ ToggleGameUIButton.MouseButton1Click:Connect(function()
         ToggleGameUIButton.Text = "🚫 HIDE GAME UI"
         ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
     end
-end)
+end
+
+ToggleGameUIButton.MouseButton1Click:Connect(toggleHideUI)
+
+-- TOGGLE FOG LOGIC
+local ToggleFogButton = Instance.new("TextButton")
+ToggleFogButton.Name = "ToggleFogButton"
+ToggleFogButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
+ToggleFogButton.Position = UDim2.new(0, S(14), 0, S(44))
+ToggleFogButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+ToggleFogButton.Text = "☁️ FOG: VISIBLE"
+ToggleFogButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleFogButton.Font = Enum.Font.GothamBold
+ToggleFogButton.TextSize = S(11)
+ToggleFogButton.AutoButtonColor = false
+ToggleFogButton.Parent = BottomContainer
+Instance.new("UICorner", ToggleFogButton).CornerRadius = UDim.new(0, S(6))
+
+local fogHidden = false
+local savedFogEnd = Lighting.FogEnd
+local savedFogStart = Lighting.FogStart
+local savedAtmospheres = {}
+
+local function toggleFogState()
+    fogHidden = not fogHidden
+    if fogHidden then
+        savedFogEnd = Lighting.FogEnd
+        savedFogStart = Lighting.FogStart
+        Lighting.FogEnd = 1000000
+        
+        savedAtmospheres = {}
+        pcall(function()
+            for _, child in ipairs(Lighting:GetChildren()) do
+                if child:IsA("Atmosphere") then
+                    table.insert(savedAtmospheres, {instance = child, parent = child.Parent})
+                    child.Parent = nil
+                end
+            end
+        end)
+        
+        ToggleFogButton.BackgroundColor3 = Color3.fromRGB(70, 150, 55)
+        ToggleFogButton.Text = "☁️ FOG: HIDDEN"
+    else
+        Lighting.FogEnd = savedFogEnd
+        Lighting.FogStart = savedFogStart
+        
+        for _, data in ipairs(savedAtmospheres) do
+            if data.instance then
+                data.instance.Parent = data.parent
+            end
+        end
+        savedAtmospheres = {}
+        
+        ToggleFogButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+        ToggleFogButton.Text = "☁️ FOG: VISIBLE"
+    end
+end
+
+ToggleFogButton.MouseButton1Click:Connect(toggleFogState)
 
 local ResetCameraButton = Instance.new("TextButton")
 ResetCameraButton.Name = "ResetCameraButton"
-ResetCameraButton.Size = UDim2.new(1, -S(28), 0, S(32))
-ResetCameraButton.Position = UDim2.new(0, S(14), 0, S(44))
+ResetCameraButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
+ResetCameraButton.Position = UDim2.new(0.5, S(4), 0, S(44))
 ResetCameraButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
 ResetCameraButton.Text = "📸 RESET CAMERA"
 ResetCameraButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1166,7 +1229,7 @@ GuideScroller.Size = UDim2.new(0.9, 0, 0.8, 0)
 GuideScroller.Position = UDim2.new(0.05, 0, 0.02, 0)
 GuideScroller.BackgroundColor3 = Color3.fromRGB(8, 9, 13)
 GuideScroller.BorderSizePixel = 0
-GuideScroller.CanvasSize = UDim2.new(0, 0, 0, S(420))
+GuideScroller.CanvasSize = UDim2.new(0, 0, 0, S(470))
 GuideScroller.ScrollBarThickness = S(4)
 GuideScroller.ScrollBarImageColor3 = Color3.fromRGB(45, 55, 80)
 GuideScroller.Parent = InstructionsFrame
@@ -1188,7 +1251,9 @@ GuideText.BackgroundTransparency = 1
 GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
 "• <b>Toggle Key</b> : Turn Freecam On/Off (Rebindable in panel)\n" ..
 "• <b>Menu Key</b> : Open/Close this layout (Rebindable in panel)\n" ..
-"• <b>Grid Toggle Key</b> : Turn Rule of Thirds On/Off (Rebindable in panel)\n\n" ..
+"• <b>Hide UI Key</b> : Turn Game UI On/Off (Rebindable in panel)\n" ..
+"• <b>Grid Toggle Key</b> : Turn Rule of Thirds On/Off (Rebindable in panel)\n" ..
+"• <b>Toggle Fog Key</b> : Turn map fog on/off (Rebindable in panel)\n\n" ..
 "<b>[ORBIT CONTROL MOVEMENTS]</b>\n" ..
 "• <b>A / D</b> : Orbit Left / Right around targets\n" ..
 "• <b>E / Q</b> : Orbit Vertically Up / Down\n" ..
@@ -1222,6 +1287,7 @@ GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
 "• <b>×</b> button : Close the panel.\n" ..
 "• <b>🚫 HIDE GAME UI</b> button : Hides all game menus, hotbars, overhead names, chat bubbles, voice icons, and default Roblox icons.\n" ..
 "• <b>📏 Rule of Thirds</b> button : Toggles a 3x3 framing grid and crosshair.\n" ..
+"• <b>☁️ FOG: VISIBLE/HIDDEN</b> button : Removes legacy fog and atmosphere objects to see clearly across the map.\n" ..
 "• <b>⟲ Reset Camera</b> button : If a player is selected, snaps the\n" ..
 "  camera back to its original framing near that character.\n\n" ..
 "<b>[CINEMATIC PLAYER TRACKING]</b>\n" ..
@@ -1557,6 +1623,14 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
 
     if input.KeyCode == GRID_TOGGLE_KEY then
         toggleGridOverlay()
+    end
+
+    if input.KeyCode == HIDE_UI_KEY then
+        toggleHideUI()
+    end
+
+    if input.KeyCode == TOGGLE_FOG_KEY then
+        toggleFogState()
     end
     
     if active then
