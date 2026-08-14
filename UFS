@@ -49,7 +49,9 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local GuiService = game:GetService("GuiService")
 local StarterGui = game:GetService("StarterGui")
-local Lighting = game:GetService("Lighting")
+local ChatService = game:GetService("Chat")
+local TextChatService = game:GetService("TextChatService")
+local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -62,8 +64,9 @@ local function S(n) return math.floor(n * SCALE + 0.5) end
 local TOGGLE_KEY = Enum.KeyCode.T     
 local MENU_KEY = Enum.KeyCode.F 
 local HIDE_UI_KEY = Enum.KeyCode.B
-local GRID_TOGGLE_KEY = Enum.KeyCode.V
-local TOGGLE_FOG_KEY = Enum.KeyCode.N       
+local GRID_TOGGLE_KEY = Enum.KeyCode.V       
+local FOG_TOGGLE_KEY = Enum.KeyCode.N
+local DOF_TOGGLE_KEY = Enum.KeyCode.M
 local SPEED_DOWN_KEY = Enum.KeyCode.LeftBracket  
 local SPEED_UP_KEY = Enum.KeyCode.RightBracket   
 
@@ -122,6 +125,9 @@ local smoothedMovement = {W = 0, A = 0, S = 0, D = 0, E = 0, Q = 0, Z = 0, X = 0
 local getTrackingCenter
 local toggleFreecam
 local toggleGridOverlay
+local toggleGameUI
+local toggleFog
+local toggleDOF
 
 local playerGui = player:WaitForChild("PlayerGui", 10)
 if not playerGui then return end
@@ -194,9 +200,9 @@ crossHairH.BorderSizePixel = 0
 -- Dynamic Canvas Dimensions
 local FULL_CANVAS_WIDTH = S(360) 
 local HEADER_HEIGHT = S(35)
-local INSTRUCTIONS_HEIGHT = S(550)
+local INSTRUCTIONS_HEIGHT = S(530)
 
-local slidersOpen = false -- Set to false by default so sliders menu starts collapsed
+local slidersOpen = false 
 local keysOpen = false 
 
 local MainCanvas = Instance.new("CanvasGroup")
@@ -399,7 +405,7 @@ local ToggleFreecamButton = Instance.new("TextButton")
 ToggleFreecamButton.Name = "ToggleFreecamButton"
 ToggleFreecamButton.Size = UDim2.new(0, S(110), 0, S(20))
 ToggleFreecamButton.Position = UDim2.new(0.89, -S(84), 0, S(3))
-ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) -- Red initially (Turn ON)
+ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) 
 ToggleFreecamButton.Text = "TURN ON"
 ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
 ToggleFreecamButton.Font = Enum.Font.GothamBold
@@ -426,14 +432,14 @@ local function updateStatusIndicator()
         StatusLabel.Text = "FREECAM: ON"
         StatusLabel.TextColor3 = Color3.fromRGB(140, 230, 130)
         ToggleFreecamButton.Text = "TURN OFF"
-        ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(140, 230, 130) -- Green (#8ce682)
+        ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(140, 230, 130) 
         ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
     else
         StatusDot.BackgroundColor3 = Color3.fromRGB(128, 128, 128)
         StatusLabel.Text = "FREECAM: OFF"
         StatusLabel.TextColor3 = Color3.fromRGB(170, 175, 185)
         ToggleFreecamButton.Text = "TURN ON"
-        ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) -- Red (#ff968c)
+        ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) 
         ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
     end
 end
@@ -708,27 +714,22 @@ BottomContainer.Parent = ControlsFrame
 
 function updateLayout(animate)
     local time = animate and 0.3 or 0
-    local currentY = S(278) -- Start of dynamic content
+    local currentY = S(278) 
 
-    -- 1. Sliders Container Calculation
     local slidersH = slidersOpen and S(490) or 0
     local targetSlidersY = currentY
     currentY = currentY + slidersH + (slidersOpen and S(6) or 0)
 
-    -- 2. Keys Toggle Position
     local targetKeysToggleY = currentY
-    currentY = currentY + S(34) -- Height of Toggle button (28) + 6 padding
+    currentY = currentY + S(34) 
 
-    -- 3. Keys Container Calculation (Adjusted to accommodate 5 keys)
-    local keysH = keysOpen and S(175) or 0
+    local keysH = keysOpen and S(210) or 0
     local targetKeysY = currentY
     currentY = currentY + keysH + (keysOpen and S(6) or 0)
 
-    -- 4. Bottom Container Position
     local targetBottomY = currentY
     currentY = currentY + S(86) 
 
-    -- 5. Total Canvas Adjustments
     local totalCanvasH = currentY + S(40) 
 
     if animate then
@@ -991,12 +992,12 @@ local function createKeybindControl(parent, yPos, labelText, initialKey, onChang
     end)
 end
 
--- Custom Keybind Interfaces (Parented to KeysContainer)
 createKeybindControl(KeysContainer, S(6), "Toggle Freecam Key", TOGGLE_KEY, function(newKey) TOGGLE_KEY = newKey end)
-createKeybindControl(KeysContainer, S(41), "Open Menu Key", MENU_KEY, function(newKey) MENU_KEY = newKey end)
-createKeybindControl(KeysContainer, S(76), "Hide Game UI Key", HIDE_UI_KEY, function(newKey) HIDE_UI_KEY = newKey end)
-createKeybindControl(KeysContainer, S(111), "Toggle Grid Key", GRID_TOGGLE_KEY, function(newKey) GRID_TOGGLE_KEY = newKey end)
-createKeybindControl(KeysContainer, S(146), "Toggle Fog Key", TOGGLE_FOG_KEY, function(newKey) TOGGLE_FOG_KEY = newKey end)
+createKeybindControl(KeysContainer, S(38), "Open Menu Key", MENU_KEY, function(newKey) MENU_KEY = newKey end)
+createKeybindControl(KeysContainer, S(70), "Hide Game UI Key", HIDE_UI_KEY, function(newKey) HIDE_UI_KEY = newKey end)
+createKeybindControl(KeysContainer, S(102), "Toggle Grid Key", GRID_TOGGLE_KEY, function(newKey) GRID_TOGGLE_KEY = newKey end)
+createKeybindControl(KeysContainer, S(134), "Toggle Fog Key", FOG_TOGGLE_KEY, function(newKey) FOG_TOGGLE_KEY = newKey end)
+createKeybindControl(KeysContainer, S(166), "Toggle DOF Key", DOF_TOGGLE_KEY, function(newKey) DOF_TOGGLE_KEY = newKey end)
 
 -- ============================================================
 -- Clean Streamlined UI Layout (Bottom Container)
@@ -1030,7 +1031,8 @@ GridOverlayButton.MouseButton1Click:Connect(toggleGridOverlay)
 local uiHidden = false
 local hiddenSavedGuis = {}
 local uiHideConnections = {}
-local originalBubbleChat = true
+local originalTextBubbleChat = true
+local originalLegacyBubbleChat = true
 local originalProximityPrompt = true 
 
 local function processOverheadHiding(char)
@@ -1058,31 +1060,50 @@ local function processOverheadHiding(char)
     end))
 end
 
-local ToggleGameUIButton = Instance.new("TextButton")
-ToggleGameUIButton.Name = "ToggleGameUIButton"
-ToggleGameUIButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
-ToggleGameUIButton.Position = UDim2.new(0.5, S(4), 0, S(6))
-ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
-ToggleGameUIButton.Text = "🚫 HIDE GAME UI"
-ToggleGameUIButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleGameUIButton.Font = Enum.Font.GothamBold
-ToggleGameUIButton.TextSize = S(11)
-ToggleGameUIButton.AutoButtonColor = false
-ToggleGameUIButton.Parent = BottomContainer
-Instance.new("UICorner", ToggleGameUIButton).CornerRadius = UDim.new(0, S(6))
+local function toggleActiveChatBubbles(visible)
+    local function scanAndHideBubbles(container)
+        if not container then return end
+        for _, desc in ipairs(container:GetDescendants()) do
+            if desc:IsA("BillboardGui") and (desc.Name:find("Bubble") or desc.Name:find("Chat")) then
+                if not visible then
+                    if desc.Enabled then
+                        desc.Enabled = false
+                        hiddenSavedGuis[desc] = true
+                    end
+                else
+                    if hiddenSavedGuis[desc] then
+                        desc.Enabled = true
+                    end
+                end
+            end
+        end
+    end
+    scanAndHideBubbles(CoreGui)
+    scanAndHideBubbles(playerGui)
+end
 
-local function toggleHideUI()
+function toggleGameUI()
     uiHidden = not uiHidden
     if uiHidden then
         pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
+        
+        -- TextChatService (Modern Chat)
         pcall(function()
-            local tcs = game:GetService("TextChatService")
-            if tcs:FindFirstChild("BubbleChatConfiguration") then
-                originalBubbleChat = tcs.BubbleChatConfiguration.Enabled
-                tcs.BubbleChatConfiguration.Enabled = false
+            if TextChatService:FindFirstChild("BubbleChatConfiguration") then
+                originalTextBubbleChat = TextChatService.BubbleChatConfiguration.Enabled
+                TextChatService.BubbleChatConfiguration.Enabled = false
             end
         end)
         
+        -- Legacy ChatService
+        pcall(function()
+            originalLegacyBubbleChat = ChatService.BubbleChatEnabled
+            ChatService.BubbleChatEnabled = false
+        end)
+        
+        -- Instantly hide active visible chat bubbles
+        toggleActiveChatBubbles(false)
+
         pcall(function()
             local pps = game:GetService("ProximityPromptService")
             originalProximityPrompt = pps.Enabled
@@ -1118,11 +1139,21 @@ local function toggleHideUI()
         for _, conn in ipairs(uiHideConnections) do pcall(function() conn:Disconnect() end) end
         uiHideConnections = {}
         pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
+        
+        -- Restore Modern Chat
         pcall(function()
-            local tcs = game:GetService("TextChatService")
-            if tcs:FindFirstChild("BubbleChatConfiguration") then tcs.BubbleChatConfiguration.Enabled = originalBubbleChat end
+            if TextChatService:FindFirstChild("BubbleChatConfiguration") then 
+                TextChatService.BubbleChatConfiguration.Enabled = originalTextBubbleChat 
+            end
         end)
         
+        -- Restore Legacy Chat
+        pcall(function()
+            ChatService.BubbleChatEnabled = originalLegacyBubbleChat
+        end)
+        
+        toggleActiveChatBubbles(true)
+
         pcall(function()
             local pps = game:GetService("ProximityPromptService")
             pps.Enabled = originalProximityPrompt
@@ -1130,7 +1161,11 @@ local function toggleHideUI()
         
         for obj, val in pairs(hiddenSavedGuis) do
             if obj and obj.Parent then
-                if obj:IsA("Humanoid") then obj.DisplayDistanceType = val else obj.Enabled = true end
+                if obj:IsA("Humanoid") then 
+                    obj.DisplayDistanceType = val 
+                else 
+                    obj.Enabled = true 
+                end
             end
         end
         hiddenSavedGuis = {}
@@ -1139,63 +1174,102 @@ local function toggleHideUI()
     end
 end
 
-ToggleGameUIButton.MouseButton1Click:Connect(toggleHideUI)
+ToggleGameUIButton = Instance.new("TextButton")
+ToggleGameUIButton.Name = "ToggleGameUIButton"
+ToggleGameUIButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
+ToggleGameUIButton.Position = UDim2.new(0.5, S(4), 0, S(6))
+ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+ToggleGameUIButton.Text = "🚫 HIDE GAME UI"
+ToggleGameUIButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleGameUIButton.Font = Enum.Font.GothamBold
+ToggleGameUIButton.TextSize = S(11)
+ToggleGameUIButton.AutoButtonColor = false
+ToggleGameUIButton.Parent = BottomContainer
+Instance.new("UICorner", ToggleGameUIButton).CornerRadius = UDim.new(0, S(6))
 
--- TOGGLE FOG LOGIC
-local ToggleFogButton = Instance.new("TextButton")
-ToggleFogButton.Name = "ToggleFogButton"
-ToggleFogButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
-ToggleFogButton.Position = UDim2.new(0, S(14), 0, S(44))
-ToggleFogButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
-ToggleFogButton.Text = "☁️ FOG: VISIBLE"
-ToggleFogButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleFogButton.Font = Enum.Font.GothamBold
-ToggleFogButton.TextSize = S(11)
-ToggleFogButton.AutoButtonColor = false
-ToggleFogButton.Parent = BottomContainer
-Instance.new("UICorner", ToggleFogButton).CornerRadius = UDim.new(0, S(6))
+ToggleGameUIButton.MouseButton1Click:Connect(toggleGameUI)
 
+-- ============================================================
+-- FOG, DOF, and RESET CAMERA LOGIC
+-- ============================================================
+local originalFogEnd = game:GetService("Lighting").FogEnd
+local initAtmo = game:GetService("Lighting"):FindFirstChildOfClass("Atmosphere")
+local originalAtmoDensity = initAtmo and initAtmo.Density or 0.3
 local fogHidden = false
-local savedFogEnd = Lighting.FogEnd
-local savedFogStart = Lighting.FogStart
-local savedAtmospheres = {}
 
-local function toggleFogState()
+local FogButton = Instance.new("TextButton")
+FogButton.Name = "FogButton"
+FogButton.Size = UDim2.new(0.25, -S(13), 0, S(32))
+FogButton.Position = UDim2.new(0, S(14), 0, S(44))
+FogButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+FogButton.Text = "FOG"
+FogButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+FogButton.Font = Enum.Font.GothamBold
+FogButton.TextSize = S(11)
+FogButton.AutoButtonColor = false
+FogButton.Parent = BottomContainer
+Instance.new("UICorner", FogButton).CornerRadius = UDim.new(0, S(6))
+
+function toggleFog()
     fogHidden = not fogHidden
     if fogHidden then
-        savedFogEnd = Lighting.FogEnd
-        savedFogStart = Lighting.FogStart
-        Lighting.FogEnd = 1000000
-        
-        savedAtmospheres = {}
-        pcall(function()
-            for _, child in ipairs(Lighting:GetChildren()) do
-                if child:IsA("Atmosphere") then
-                    table.insert(savedAtmospheres, {instance = child, parent = child.Parent})
-                    child.Parent = nil
-                end
-            end
-        end)
-        
-        ToggleFogButton.BackgroundColor3 = Color3.fromRGB(70, 150, 55)
-        ToggleFogButton.Text = "☁️ FOG: HIDDEN"
-    else
-        Lighting.FogEnd = savedFogEnd
-        Lighting.FogStart = savedFogStart
-        
-        for _, data in ipairs(savedAtmospheres) do
-            if data.instance then
-                data.instance.Parent = data.parent
-            end
+        originalFogEnd = game:GetService("Lighting").FogEnd
+        game:GetService("Lighting").FogEnd = 100000
+        local currentAtmo = game:GetService("Lighting"):FindFirstChildOfClass("Atmosphere")
+        if currentAtmo then
+            originalAtmoDensity = currentAtmo.Density
+            currentAtmo.Density = 0
         end
-        savedAtmospheres = {}
-        
-        ToggleFogButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
-        ToggleFogButton.Text = "☁️ FOG: VISIBLE"
+        FogButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+    else
+        game:GetService("Lighting").FogEnd = originalFogEnd
+        local currentAtmo = game:GetService("Lighting"):FindFirstChildOfClass("Atmosphere")
+        if currentAtmo then
+            currentAtmo.Density = originalAtmoDensity
+        end
+        FogButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
     end
 end
 
-ToggleFogButton.MouseButton1Click:Connect(toggleFogState)
+FogButton.MouseButton1Click:Connect(toggleFog)
+
+local originalDofEnabled = true
+local initDof = game:GetService("Lighting"):FindFirstChildOfClass("DepthOfFieldEffect")
+if initDof then originalDofEnabled = initDof.Enabled end
+local dofHidden = false
+
+local DOFButton = Instance.new("TextButton")
+DOFButton.Name = "DOFButton"
+DOFButton.Size = UDim2.new(0.25, -S(13), 0, S(32))
+DOFButton.Position = UDim2.new(0.25, S(9), 0, S(44))
+DOFButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+DOFButton.Text = "DOF"
+DOFButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+DOFButton.Font = Enum.Font.GothamBold
+DOFButton.TextSize = S(11)
+DOFButton.AutoButtonColor = false
+DOFButton.Parent = BottomContainer
+Instance.new("UICorner", DOFButton).CornerRadius = UDim.new(0, S(6))
+
+function toggleDOF()
+    dofHidden = not dofHidden
+    if dofHidden then
+        local currentDof = game:GetService("Lighting"):FindFirstChildOfClass("DepthOfFieldEffect")
+        if currentDof then 
+            originalDofEnabled = currentDof.Enabled
+            currentDof.Enabled = false 
+        end
+        DOFButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+    else
+        local currentDof = game:GetService("Lighting"):FindFirstChildOfClass("DepthOfFieldEffect")
+        if currentDof then 
+            currentDof.Enabled = originalDofEnabled
+        end
+        DOFButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+    end
+end
+
+DOFButton.MouseButton1Click:Connect(toggleDOF)
 
 local ResetCameraButton = Instance.new("TextButton")
 ResetCameraButton.Name = "ResetCameraButton"
@@ -1229,7 +1303,7 @@ GuideScroller.Size = UDim2.new(0.9, 0, 0.8, 0)
 GuideScroller.Position = UDim2.new(0.05, 0, 0.02, 0)
 GuideScroller.BackgroundColor3 = Color3.fromRGB(8, 9, 13)
 GuideScroller.BorderSizePixel = 0
-GuideScroller.CanvasSize = UDim2.new(0, 0, 0, S(470))
+GuideScroller.CanvasSize = UDim2.new(0, 0, 0, S(420))
 GuideScroller.ScrollBarThickness = S(4)
 GuideScroller.ScrollBarImageColor3 = Color3.fromRGB(45, 55, 80)
 GuideScroller.Parent = InstructionsFrame
@@ -1251,9 +1325,7 @@ GuideText.BackgroundTransparency = 1
 GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
 "• <b>Toggle Key</b> : Turn Freecam On/Off (Rebindable in panel)\n" ..
 "• <b>Menu Key</b> : Open/Close this layout (Rebindable in panel)\n" ..
-"• <b>Hide UI Key</b> : Turn Game UI On/Off (Rebindable in panel)\n" ..
-"• <b>Grid Toggle Key</b> : Turn Rule of Thirds On/Off (Rebindable in panel)\n" ..
-"• <b>Toggle Fog Key</b> : Turn map fog on/off (Rebindable in panel)\n\n" ..
+"• <b>Grid Toggle Key</b> : Turn Rule of Thirds On/Off (Rebindable in panel)\n\n" ..
 "<b>[ORBIT CONTROL MOVEMENTS]</b>\n" ..
 "• <b>A / D</b> : Orbit Left / Right around targets\n" ..
 "• <b>E / Q</b> : Orbit Vertically Up / Down\n" ..
@@ -1287,7 +1359,6 @@ GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
 "• <b>×</b> button : Close the panel.\n" ..
 "• <b>🚫 HIDE GAME UI</b> button : Hides all game menus, hotbars, overhead names, chat bubbles, voice icons, and default Roblox icons.\n" ..
 "• <b>📏 Rule of Thirds</b> button : Toggles a 3x3 framing grid and crosshair.\n" ..
-"• <b>☁️ FOG: VISIBLE/HIDDEN</b> button : Removes legacy fog and atmosphere objects to see clearly across the map.\n" ..
 "• <b>⟲ Reset Camera</b> button : If a player is selected, snaps the\n" ..
 "  camera back to its original framing near that character.\n\n" ..
 "<b>[CINEMATIC PLAYER TRACKING]</b>\n" ..
@@ -1621,16 +1692,20 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
         toggleFreecam()
     end
 
+    if input.KeyCode == HIDE_UI_KEY then
+        toggleGameUI()
+    end
+
     if input.KeyCode == GRID_TOGGLE_KEY then
         toggleGridOverlay()
     end
 
-    if input.KeyCode == HIDE_UI_KEY then
-        toggleHideUI()
+    if input.KeyCode == FOG_TOGGLE_KEY then
+        toggleFog()
     end
 
-    if input.KeyCode == TOGGLE_FOG_KEY then
-        toggleFogState()
+    if input.KeyCode == DOF_TOGGLE_KEY then
+        toggleDOF()
     end
     
     if active then
@@ -1702,7 +1777,6 @@ end))
 trackConnection(UserInputService.InputChanged:Connect(function(input)
     if not active then return end
     if input.UserInputType == Enum.UserInputType.MouseWheel then
-        -- Smoothly changes the FOV slider value dynamically driven by scrollSensitivity
         fovControl.setValue(fovControl.getValue() - (input.Position.Z * scrollSensitivity))
     end
 end))
@@ -1711,7 +1785,6 @@ end))
 getgenv().IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(function(dt)
     if not active then return end
 
-    -- Applies that exact smoothness value to the camera's FOV zoom transition globally
     local fovLerpSpeed = math.clamp(movementSmoothness, 1, 30)
     camera.FieldOfView = camera.FieldOfView + (targetFov - camera.FieldOfView) * math.clamp(dt * fovLerpSpeed, 0, 1)
 
@@ -1759,14 +1832,11 @@ getgenv().IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(fu
         local forwardZoomSpeed = currentForwardSpeed * 10 * dt
         local verticalAngularSpeed = sideAngularSpeed * verticalSpeed
         
-        -- W/S inputs adjust physical target distance smoothly
         targetOrbitDistance = math.max(targetOrbitDistance + (forwardZoomSpeed * (smoothedMovement.S - smoothedMovement.W)), 2)
         
-        -- Interpolate physical orbit zoom using movement smoothness parameter
         local distanceLerpSpeed = math.clamp(movementSmoothness, 1, 30)
         orbitDistance = orbitDistance + (targetOrbitDistance - orbitDistance) * math.clamp(dt * distanceLerpSpeed, 0, 1)
 
-        -- Apply smoothed Orbiting (Tracking Mode)
         targetRotationX = targetRotationX + (sideAngularSpeed * (smoothedMovement.D - smoothedMovement.A))
         targetRotationY = math.clamp(targetRotationY + (verticalAngularSpeed * (smoothedMovement.Q - smoothedMovement.E)), -85, 85)
     end
@@ -1786,7 +1856,6 @@ getgenv().IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(fu
         local mappedLerpSpeed = 31 - math.clamp(smoothingWeight, 1, 30)
         camera.CFrame = camera.CFrame:Lerp(camCFrame, math.clamp(dt * mappedLerpSpeed, 0, 1))
     else
-        -- Standard Free Fly Mode using the smoothed directional input
         local horizontalDirection = Vector3.new((smoothedMovement.D - smoothedMovement.A) * currentSideSpeed, 0, (smoothedMovement.S - smoothedMovement.W) * currentForwardSpeed)
         local moveMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0)
         
