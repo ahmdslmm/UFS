@@ -77,6 +77,8 @@ local menuVisible = false
 local showingInstructions = false
 local minimized = false
 local targets = {} 
+local hiddenPlayers = {}
+
 local camCFrame = camera.CFrame
 local targetRotationX, targetRotationY = 0, 0
 local rotationX, rotationY = 0, 0
@@ -104,8 +106,8 @@ local sensitivity = 0.1
 local targetFov = 70
 local minFov = 0.1
 local maxFov = 120
-local scrollSensitivity = 1 -- Dynamic scroll FOV sensitivity (1-10)
-local smoothingWeight = 0 -- Set tracking smoothness to 0 by default
+local scrollSensitivity = 1
+local smoothingWeight = 0
 local minSmooth = 1
 local maxSmooth = 30
 local verticalSpeed = 1.0
@@ -122,12 +124,18 @@ local trackingMode = nil
 local movement = {W = 0, A = 0, S = 0, D = 0, E = 0, Q = 0, Z = 0, X = 0}
 local smoothedMovement = {W = 0, A = 0, S = 0, D = 0, E = 0, Q = 0, Z = 0, X = 0}
 
+-- Forward Declarations
 local getTrackingCenter
 local toggleFreecam
 local toggleGridOverlay
 local toggleGameUI
 local toggleFog
 local toggleDOF
+local resetCameraOrbit
+local refreshPlayerList
+local updateLayout
+local updatePlayerVisibility
+local updateAllPlayersVisibility
 
 local playerGui = player:WaitForChild("PlayerGui", 10)
 if not playerGui then return end
@@ -218,31 +226,9 @@ MainCanvas.Parent = ScreenGui
 local MainPanel = Instance.new("Frame")
 MainPanel.Name = "MainPanel"
 MainPanel.Size = UDim2.new(1, 0, 1, 0)
-MainPanel.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+MainPanel.BackgroundColor3 = Color3.fromRGB(10, 12, 20)
 MainPanel.BorderSizePixel = 0
 MainPanel.Parent = MainCanvas
-
-local function applyDarkGradient(instance)
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(12, 14, 23)), 
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(4, 4, 6))    
-    })
-    gradient.Rotation = 45
-    gradient.Parent = instance
-end
-
-local function applyBorderGradient(instance)
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 45, 75)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 16, 28))
-    })
-    gradient.Rotation = 45
-    gradient.Parent = instance
-end
-
-applyDarkGradient(MainPanel)
 
 local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, S(8))
@@ -250,9 +236,8 @@ MainCorner.Parent = MainPanel
 
 local MainStroke = Instance.new("UIStroke")
 MainStroke.Thickness = 1.5
-MainStroke.Color = Color3.fromRGB(255, 255, 255)
+MainStroke.Color = Color3.fromRGB(35, 45, 75)
 MainStroke.Parent = MainPanel
-applyBorderGradient(MainStroke)
 
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -S(122), 0, S(35))
@@ -280,9 +265,6 @@ InstructionsFrame.BackgroundTransparency = 1
 InstructionsFrame.Visible = false
 InstructionsFrame.Parent = MainPanel
 
--- Forward declare updateLayout for UI buttons
-local updateLayout
-
 local function toggleMenu(show)
     if show then
         MainCanvas.Visible = true
@@ -307,7 +289,6 @@ CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 CloseButton.Font = Enum.Font.GothamBold
 CloseButton.TextSize = S(18)
 CloseButton.Parent = MainPanel
-
 Instance.new("UICorner", CloseButton).CornerRadius = UDim.new(0, S(4))
 
 CloseButton.MouseButton1Click:Connect(function()
@@ -328,7 +309,6 @@ HelpButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 HelpButton.Font = Enum.Font.GothamBold
 HelpButton.TextSize = S(14)
 HelpButton.Parent = MainPanel
-
 Instance.new("UICorner", HelpButton).CornerRadius = UDim.new(0, S(4))
 
 HelpButton.MouseButton1Click:Connect(function()
@@ -354,7 +334,6 @@ MinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 MinimizeButton.Font = Enum.Font.GothamBold
 MinimizeButton.TextSize = S(16)
 MinimizeButton.Parent = MainPanel
-
 Instance.new("UICorner", MinimizeButton).CornerRadius = UDim.new(0, S(4))
 
 MinimizeButton.MouseButton1Click:Connect(function()
@@ -380,79 +359,133 @@ MinimizeButton.MouseButton1Click:Connect(function()
     end
 end)
 
-local StatusDot = Instance.new("Frame")
-StatusDot.Name = "StatusDot"
-StatusDot.Size = UDim2.new(0, S(10), 0, S(10))
-StatusDot.Position = UDim2.new(0, S(14), 0, S(8))
-StatusDot.BackgroundColor3 = Color3.fromRGB(128, 128, 128)
-StatusDot.BorderSizePixel = 0
-StatusDot.Parent = ControlsFrame
-Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
-
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Name = "StatusLabel"
-StatusLabel.Size = UDim2.new(1, -S(110), 0, S(16))
-StatusLabel.Position = UDim2.new(0, S(28), 0, S(5))
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "FREECAM: OFF"
-StatusLabel.TextColor3 = Color3.fromRGB(170, 175, 185)
-StatusLabel.Font = Enum.Font.GothamBold
-StatusLabel.TextSize = S(12)
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.Parent = ControlsFrame
-
+-- Top Control Buttons (Freecam Status & Hide All Players)
 local ToggleFreecamButton = Instance.new("TextButton")
 ToggleFreecamButton.Name = "ToggleFreecamButton"
-ToggleFreecamButton.Size = UDim2.new(0, S(110), 0, S(20))
-ToggleFreecamButton.Position = UDim2.new(0.89, -S(84), 0, S(3))
+ToggleFreecamButton.Size = UDim2.new(0.5, -S(18), 0, S(24))
+ToggleFreecamButton.Position = UDim2.new(0, S(14), 0, S(6))
 ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) 
-ToggleFreecamButton.Text = "TURN ON"
+ToggleFreecamButton.Text = "FREECAM STATUS : OFF"
 ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
 ToggleFreecamButton.Font = Enum.Font.GothamBold
-ToggleFreecamButton.TextSize = S(11)
+ToggleFreecamButton.TextSize = S(10.5)
 ToggleFreecamButton.AutoButtonColor = false
 ToggleFreecamButton.Parent = ControlsFrame
-
-local ToggleFreecamCorner = Instance.new("UICorner")
-ToggleFreecamCorner.CornerRadius = UDim.new(0, S(4))
-ToggleFreecamCorner.Parent = ToggleFreecamButton
-
-local ToggleFreecamStroke = Instance.new("UIStroke")
-ToggleFreecamStroke.Thickness = 0
-ToggleFreecamStroke.Parent = ToggleFreecamButton
-applyBorderGradient(ToggleFreecamStroke)
+Instance.new("UICorner", ToggleFreecamButton).CornerRadius = UDim.new(0, S(4))
 
 ToggleFreecamButton.MouseButton1Click:Connect(function()
     toggleFreecam()
 end)
 
+local HideAllPlayersButton = Instance.new("TextButton")
+HideAllPlayersButton.Name = "HideAllPlayersButton"
+HideAllPlayersButton.Size = UDim2.new(0.5, -S(18), 0, S(24))
+HideAllPlayersButton.Position = UDim2.new(0.5, S(4), 0, S(6))
+HideAllPlayersButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+HideAllPlayersButton.Text = "HIDE ALL PLAYER : OFF"
+HideAllPlayersButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+HideAllPlayersButton.Font = Enum.Font.GothamBold
+HideAllPlayersButton.TextSize = S(10.5)
+HideAllPlayersButton.AutoButtonColor = false
+HideAllPlayersButton.Parent = ControlsFrame
+Instance.new("UICorner", HideAllPlayersButton).CornerRadius = UDim.new(0, S(4))
+
 local function updateStatusIndicator()
     if active then
-        StatusDot.BackgroundColor3 = Color3.fromRGB(70, 200, 55)
-        StatusLabel.Text = "FREECAM: ON"
-        StatusLabel.TextColor3 = Color3.fromRGB(140, 230, 130)
-        ToggleFreecamButton.Text = "TURN OFF"
+        ToggleFreecamButton.Text = "FREECAM STATUS : ON"
         ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(140, 230, 130) 
         ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
     else
-        StatusDot.BackgroundColor3 = Color3.fromRGB(128, 128, 128)
-        StatusLabel.Text = "FREECAM: OFF"
-        StatusLabel.TextColor3 = Color3.fromRGB(170, 175, 185)
-        ToggleFreecamButton.Text = "TURN ON"
+        ToggleFreecamButton.Text = "FREECAM STATUS : OFF"
         ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) 
         ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
     end
 end
 
+-- ============================================================
+-- PLAYER VISIBILITY MANAGER (LINKED DIRECTLY TO BUTTONS)
+-- ============================================================
+function updatePlayerVisibility(p)
+    if not p or not p.Character then return end
+    local isHidden = (hiddenPlayers[p.UserId] == true)
+    for _, v in ipairs(p.Character:GetDescendants()) do
+        if v:IsA("BasePart") then
+            v.LocalTransparencyModifier = isHidden and 1 or 0
+        elseif v:IsA("Decal") then
+            v.Transparency = isHidden and 1 or 0
+        elseif v:IsA("BillboardGui") or v:IsA("ParticleEmitter") or v:IsA("Beam") or v:IsA("Trail") or v:IsA("Highlight") then
+            v.Enabled = not isHidden
+        end
+    end
+end
+
+function updateAllPlayersVisibility()
+    for _, p in ipairs(Players:GetPlayers()) do
+        updatePlayerVisibility(p)
+    end
+end
+
+local function syncHideAllButtonState()
+    local total = 0
+    local hiddenCount = 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        total = total + 1
+        if hiddenPlayers[p.UserId] then
+            hiddenCount = hiddenCount + 1
+        end
+    end
+
+    if total > 0 and hiddenCount == total then
+        HideAllPlayersButton.Text = "HIDE ALL PLAYER : ON"
+        HideAllPlayersButton.BackgroundColor3 = Color3.fromRGB(70, 200, 55)
+    else
+        HideAllPlayersButton.Text = "HIDE ALL PLAYER : OFF"
+        HideAllPlayersButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+    end
+end
+
+HideAllPlayersButton.MouseButton1Click:Connect(function()
+    local allCurrentlyHidden = true
+    for _, p in ipairs(Players:GetPlayers()) do
+        if not hiddenPlayers[p.UserId] then
+            allCurrentlyHidden = false
+            break
+        end
+    end
+
+    local targetState = not allCurrentlyHidden
+    for _, p in ipairs(Players:GetPlayers()) do
+        hiddenPlayers[p.UserId] = targetState
+    end
+
+    updateAllPlayersVisibility()
+    refreshPlayerList()
+end)
+
+-- Persistent check for character transparency
+trackConnection(RunService.RenderStepped:Connect(function()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if hiddenPlayers[p.UserId] then
+            if p.Character then
+                for _, v in ipairs(p.Character:GetDescendants()) do
+                    if v:IsA("BasePart") then
+                        v.LocalTransparencyModifier = 1
+                    end
+                end
+            end
+        end
+    end
+end))
+
 local SearchBar = Instance.new("TextBox")
 SearchBar.Name = "SearchBar"
-SearchBar.Size = UDim2.new(1, -S(56), 0, S(22))
-SearchBar.Position = UDim2.new(0, S(14), 0, S(32))
+SearchBar.Size = UDim2.new(1, -S(56), 0, S(24))
+SearchBar.Position = UDim2.new(0, S(14), 0, S(36))
 SearchBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 SearchBar.PlaceholderText = "Search username..."
 SearchBar.Text = ""
 SearchBar.TextColor3 = Color3.fromRGB(0, 0, 0)
-SearchBar.PlaceholderColor3 = Color3.fromRGB(20, 20, 20)
+SearchBar.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
 SearchBar.Font = Enum.Font.Code
 SearchBar.TextSize = S(12)
 SearchBar.ClearTextOnFocus = false
@@ -462,13 +495,13 @@ Instance.new("UICorner", SearchBar).CornerRadius = UDim.new(0, S(4))
 
 local ClearSearchButton = Instance.new("TextButton")
 ClearSearchButton.Name = "ClearSearchButton"
-ClearSearchButton.Size = UDim2.new(0, S(22), 0, S(22))
-ClearSearchButton.Position = UDim2.new(1, -S(35), 0, S(32))
+ClearSearchButton.Size = UDim2.new(0, S(24), 0, S(24))
+ClearSearchButton.Position = UDim2.new(1, -S(38), 0, S(36))
 ClearSearchButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
 ClearSearchButton.Text = "×"
 ClearSearchButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 ClearSearchButton.Font = Enum.Font.GothamBold
-ClearSearchButton.TextSize = S(27)
+ClearSearchButton.TextSize = S(20)
 ClearSearchButton.AutoButtonColor = false
 ClearSearchButton.Parent = ControlsFrame
 Instance.new("UICorner", ClearSearchButton).CornerRadius = UDim.new(0, S(4))
@@ -485,40 +518,43 @@ end))
 
 local PlayerList = Instance.new("ScrollingFrame")
 PlayerList.Size = UDim2.new(1, -S(28), 0, S(120))
-PlayerList.Position = UDim2.new(0, S(14), 0, S(58))
+PlayerList.Position = UDim2.new(0, S(14), 0, S(66))
 PlayerList.BackgroundColor3 = Color3.fromRGB(8, 9, 13)
 PlayerList.BorderSizePixel = 0
 PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
-PlayerList.ScrollBarThickness = S(10)
+PlayerList.ScrollBarThickness = S(4)
 PlayerList.ScrollBarImageColor3 = Color3.fromRGB(45, 55, 80)
+PlayerList.VerticalScrollBarInset = Enum.ScrollBarInset.None
 PlayerList.Parent = ControlsFrame
 
 Instance.new("UICorner", PlayerList).CornerRadius = UDim.new(0, S(6))
 local ListStroke = Instance.new("UIStroke")
-ListStroke.Thickness = 2
-ListStroke.Color = Color3.fromRGB(255, 255, 255)
+ListStroke.Thickness = 1.5
+ListStroke.Color = Color3.fromRGB(35, 45, 75)
 ListStroke.Parent = PlayerList
-applyBorderGradient(ListStroke)
 
 local UIListLayout = Instance.new("UIListLayout")
 UIListLayout.SortOrder = Enum.SortOrder.Name
-UIListLayout.Padding = UDim.new(0, S(5)) 
+UIListLayout.Padding = UDim.new(0, S(4)) 
 UIListLayout.Parent = PlayerList
 
 local ListPadding = Instance.new("UIPadding")
-ListPadding.PaddingTop = UDim.new(0, S(6))
-ListPadding.PaddingBottom = UDim.new(0, S(6))
-ListPadding.PaddingLeft = UDim.new(0, S(6))  
-ListPadding.PaddingRight = UDim.new(0, S(6))
+ListPadding.PaddingTop = UDim.new(0, S(4))
+ListPadding.PaddingBottom = UDim.new(0, S(4))
+ListPadding.PaddingLeft = UDim.new(0, S(4))  
+ListPadding.PaddingRight = UDim.new(0, S(4))
 ListPadding.Parent = PlayerList
 
 local COLOR_ON = Color3.fromRGB(70, 200, 55)     
 local COLOR_OFF = Color3.fromRGB(222, 124, 126)  
 local COLOR_NEITHER = Color3.fromRGB(128, 128, 128) 
 
+-- ============================================================
+-- EQUALLY SPACED HEAD / BODY / CUSTOM TRACKING BUTTONS
+-- ============================================================
 local HeadTrackButton = Instance.new("TextButton")
-HeadTrackButton.Size = UDim2.new(0.3, 0, 0, S(22))
-HeadTrackButton.Position = UDim2.new(0, S(14), 0, S(184))
+HeadTrackButton.Size = UDim2.new(1/3, -S(14), 0, S(24))
+HeadTrackButton.Position = UDim2.new(0, S(14), 0, S(194))
 HeadTrackButton.Text = "HEAD"
 HeadTrackButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 HeadTrackButton.Font = Enum.Font.GothamBold
@@ -529,8 +565,8 @@ Instance.new("UICorner", HeadTrackButton).CornerRadius = UDim.new(0, S(4))
 
 local BodyTrackButton = Instance.new("TextButton")
 BodyTrackButton.AnchorPoint = Vector2.new(0.5, 0)
-BodyTrackButton.Size = UDim2.new(0.3, 0, 0, S(22))
-BodyTrackButton.Position = UDim2.new(0.5, 0, 0, S(184))
+BodyTrackButton.Size = UDim2.new(1/3, -S(14), 0, S(24))
+BodyTrackButton.Position = UDim2.new(0.5, 0, 0, S(194))
 BodyTrackButton.Text = "BODY"
 BodyTrackButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 BodyTrackButton.Font = Enum.Font.GothamBold
@@ -541,8 +577,8 @@ Instance.new("UICorner", BodyTrackButton).CornerRadius = UDim.new(0, S(4))
 
 local CustomTrackButton = Instance.new("TextButton")
 CustomTrackButton.AnchorPoint = Vector2.new(1, 0)
-CustomTrackButton.Size = UDim2.new(0.3, 0, 0, S(22))
-CustomTrackButton.Position = UDim2.new(1, -S(14), 0, S(184))
+CustomTrackButton.Size = UDim2.new(1/3, -S(14), 0, S(24))
+CustomTrackButton.Position = UDim2.new(1, -S(14), 0, S(194))
 CustomTrackButton.Text = "CUSTOM"
 CustomTrackButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 CustomTrackButton.Font = Enum.Font.GothamBold
@@ -594,8 +630,8 @@ BodyTrackButton.MouseButton1Click:Connect(function() selectTrackingMode("Humanoi
 CustomTrackButton.MouseButton1Click:Connect(function() selectTrackingMode("Custom") end)
 
 local SetPivotButton = Instance.new("TextButton")
-SetPivotButton.Size = UDim2.new(1, -S(56), 0, S(22))
-SetPivotButton.Position = UDim2.new(0, S(14), 0, S(212))
+SetPivotButton.Size = UDim2.new(1, -S(56), 0, S(24))
+SetPivotButton.Position = UDim2.new(0, S(14), 0, S(224))
 SetPivotButton.BackgroundColor3 = Color3.fromRGB(220, 200, 100)
 SetPivotButton.Text = "🚫 🎯  SET CUSTOM TARGET"
 SetPivotButton.TextColor3 = Color3.fromRGB(0, 0, 0)
@@ -648,13 +684,13 @@ SetPivotButton.MouseButton1Click:Connect(function()
 end)
 
 local ClearOrbitButton = Instance.new("TextButton")
-ClearOrbitButton.Size = UDim2.new(0, S(22), 0, S(22))
-ClearOrbitButton.Position = UDim2.new(1, -S(35), 0, S(212))
+ClearOrbitButton.Size = UDim2.new(0, S(24), 0, S(24))
+ClearOrbitButton.Position = UDim2.new(1, -S(38), 0, S(224))
 ClearOrbitButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
 ClearOrbitButton.Text = "×"
 ClearOrbitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 ClearOrbitButton.Font = Enum.Font.GothamBold
-ClearOrbitButton.TextSize = S(27)
+ClearOrbitButton.TextSize = S(20)
 ClearOrbitButton.AutoButtonColor = false
 ClearOrbitButton.Parent = ControlsFrame
 Instance.new("UICorner", ClearOrbitButton).CornerRadius = UDim.new(0, S(4))
@@ -714,7 +750,7 @@ BottomContainer.Parent = ControlsFrame
 
 function updateLayout(animate)
     local time = animate and 0.3 or 0
-    local currentY = S(278) 
+    local currentY = S(290) 
 
     local slidersH = slidersOpen and S(490) or 0
     local targetSlidersY = currentY
@@ -755,8 +791,8 @@ function updateLayout(animate)
     KeysToggleBtn.Text = keysOpen and "▼  KEY CONFIGURATION" or "▶  KEY CONFIGURATION"
 end
 
-SlidersToggleBtn.Position = UDim2.new(0, S(14), 0, S(244))
-SlidersContainer.Position = UDim2.new(0, 0, 0, S(278))
+SlidersToggleBtn.Position = UDim2.new(0, S(14), 0, S(256))
+SlidersContainer.Position = UDim2.new(0, 0, 0, S(290))
 
 SlidersToggleBtn.MouseButton1Click:Connect(function()
     slidersOpen = not slidersOpen
@@ -797,11 +833,6 @@ local function createSliderControl(parent, yPos, opts)
     InputBox.Parent = parent
     Instance.new("UICorner", InputBox).CornerRadius = UDim.new(0, S(10))
 
-    local BoxStroke = Instance.new("UIStroke")
-    BoxStroke.Thickness = 0
-    BoxStroke.Color = Color3.fromRGB(190, 195, 205)
-    BoxStroke.Parent = InputBox
-
     local SliderBar = Instance.new("TextButton")
     SliderBar.Size = UDim2.new(1, -S(28), 0, S(15))
     SliderBar.Position = UDim2.new(0, S(14), 0, yPos + S(28))
@@ -810,11 +841,6 @@ local function createSliderControl(parent, yPos, opts)
     SliderBar.AutoButtonColor = false
     SliderBar.ZIndex = 1
     SliderBar.Parent = parent
-
-    local BarStroke = Instance.new("UIStroke")
-    BarStroke.Thickness = 0
-    BarStroke.Color = Color3.fromRGB(190, 195, 205)
-    BarStroke.Parent = SliderBar
 
     local SliderFill = Instance.new("Frame")
     SliderFill.Size = UDim2.new((opts.initial - opts.min) / (opts.max - opts.min), 0, 1, 0)
@@ -1000,20 +1026,9 @@ createKeybindControl(KeysContainer, S(134), "Toggle Fog Key", FOG_TOGGLE_KEY, fu
 createKeybindControl(KeysContainer, S(166), "Toggle DOF Key", DOF_TOGGLE_KEY, function(newKey) DOF_TOGGLE_KEY = newKey end)
 
 -- ============================================================
--- Clean Streamlined UI Layout (Bottom Container)
+-- Bottom Container Buttons
 -- ============================================================
-function toggleGridOverlay()
-    GridOverlay.Visible = not GridOverlay.Visible
-    if GridOverlay.Visible then
-        GridOverlayButton.BackgroundColor3 = Color3.fromRGB(70, 150, 55)
-        GridOverlayButton.Text = "📏 RULE OF THIRDS: ON"
-    else
-        GridOverlayButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
-        GridOverlayButton.Text = "📏 RULE OF THIRDS: OFF"
-    end
-end
-
-GridOverlayButton = Instance.new("TextButton")
+local GridOverlayButton = Instance.new("TextButton")
 GridOverlayButton.Name = "GridOverlayButton"
 GridOverlayButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
 GridOverlayButton.Position = UDim2.new(0, S(14), 0, S(6))
@@ -1025,9 +1040,33 @@ GridOverlayButton.TextSize = S(11)
 GridOverlayButton.AutoButtonColor = false
 GridOverlayButton.Parent = BottomContainer
 Instance.new("UICorner", GridOverlayButton).CornerRadius = UDim.new(0, S(6))
+
+function toggleGridOverlay()
+    GridOverlay.Visible = not GridOverlay.Visible
+    if GridOverlay.Visible then
+        GridOverlayButton.BackgroundColor3 = Color3.fromRGB(70, 150, 55)
+        GridOverlayButton.Text = "📏 RULE OF THIRDS: ON"
+    else
+        GridOverlayButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+        GridOverlayButton.Text = "📏 RULE OF THIRDS: OFF"
+    end
+end
+
 GridOverlayButton.MouseButton1Click:Connect(toggleGridOverlay)
 
--- HIDE GAME UI Logics
+local ToggleGameUIButton = Instance.new("TextButton")
+ToggleGameUIButton.Name = "ToggleGameUIButton"
+ToggleGameUIButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
+ToggleGameUIButton.Position = UDim2.new(0.5, S(4), 0, S(6))
+ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+ToggleGameUIButton.Text = "🚫 HIDE GAME UI"
+ToggleGameUIButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleGameUIButton.Font = Enum.Font.GothamBold
+ToggleGameUIButton.TextSize = S(11)
+ToggleGameUIButton.AutoButtonColor = false
+ToggleGameUIButton.Parent = BottomContainer
+Instance.new("UICorner", ToggleGameUIButton).CornerRadius = UDim.new(0, S(6))
+
 local uiHidden = false
 local hiddenSavedGuis = {}
 local uiHideConnections = {}
@@ -1087,7 +1126,6 @@ function toggleGameUI()
     if uiHidden then
         pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
         
-        -- TextChatService (Modern Chat)
         pcall(function()
             if TextChatService:FindFirstChild("BubbleChatConfiguration") then
                 originalTextBubbleChat = TextChatService.BubbleChatConfiguration.Enabled
@@ -1095,13 +1133,11 @@ function toggleGameUI()
             end
         end)
         
-        -- Legacy ChatService
         pcall(function()
             originalLegacyBubbleChat = ChatService.BubbleChatEnabled
             ChatService.BubbleChatEnabled = false
         end)
         
-        -- Instantly hide active visible chat bubbles
         toggleActiveChatBubbles(false)
 
         pcall(function()
@@ -1140,14 +1176,12 @@ function toggleGameUI()
         uiHideConnections = {}
         pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
         
-        -- Restore Modern Chat
         pcall(function()
             if TextChatService:FindFirstChild("BubbleChatConfiguration") then 
                 TextChatService.BubbleChatConfiguration.Enabled = originalTextBubbleChat 
             end
         end)
         
-        -- Restore Legacy Chat
         pcall(function()
             ChatService.BubbleChatEnabled = originalLegacyBubbleChat
         end)
@@ -1173,19 +1207,6 @@ function toggleGameUI()
         ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
     end
 end
-
-ToggleGameUIButton = Instance.new("TextButton")
-ToggleGameUIButton.Name = "ToggleGameUIButton"
-ToggleGameUIButton.Size = UDim2.new(0.5, -S(18), 0, S(32))
-ToggleGameUIButton.Position = UDim2.new(0.5, S(4), 0, S(6))
-ToggleGameUIButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
-ToggleGameUIButton.Text = "🚫 HIDE GAME UI"
-ToggleGameUIButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleGameUIButton.Font = Enum.Font.GothamBold
-ToggleGameUIButton.TextSize = S(11)
-ToggleGameUIButton.AutoButtonColor = false
-ToggleGameUIButton.Parent = BottomContainer
-Instance.new("UICorner", ToggleGameUIButton).CornerRadius = UDim.new(0, S(6))
 
 ToggleGameUIButton.MouseButton1Click:Connect(toggleGameUI)
 
@@ -1297,7 +1318,9 @@ end)
 
 updateLayout(false)
 
+-- ============================================================
 -- Instructions Pane Setup
+-- ============================================================
 local GuideScroller = Instance.new("ScrollingFrame")
 GuideScroller.Size = UDim2.new(0.9, 0, 0.8, 0)
 GuideScroller.Position = UDim2.new(0.05, 0, 0.02, 0)
@@ -1314,9 +1337,8 @@ GuideCorner.Parent = GuideScroller
 
 local GuideStroke = Instance.new("UIStroke")
 GuideStroke.Thickness = 1
-GuideStroke.Color = Color3.fromRGB(255, 255, 255)
+GuideStroke.Color = Color3.fromRGB(35, 45, 75)
 GuideStroke.Parent = GuideScroller
-applyBorderGradient(GuideStroke)
 
 local GuideText = Instance.new("TextLabel")
 GuideText.Size = UDim2.new(1, -S(16), 1, 0)
@@ -1347,11 +1369,9 @@ GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
 "• <b>Tracking Point</b> buttons : Head, Body, or Custom Point toggles.\n" ..
 "• <b>🎯 Set Custom Pivot</b> : Raycasts directly forward from the center of your screen to lock orbit onto a specific prop, wall, or floor.\n" ..
 "• <b>× Button (Next to Pivot)</b> : Instantly clears targets/pivots and returns to free-fly mode.\n" ..
-"• A green/gray dot + <b>FREECAM: ON/OFF</b> label near the top shows\n" ..
-"  whether Freecam mode is currently active.\n" ..
-"• <b>Turn ON/OFF</b> button : Toggles Freecam without using your keybind.\n" ..
-"• <b>Search bar</b> : Type part of a username to filter the roster below.\n" ..
-"• Selecting a player automatically moves the camera to frame them.\n\n" ..
+"• <b>HIDE ALL PLAYER</b> : Toggle character visibility globally (syncs with player list).\n" ..
+"• <b>HIDE / UNHIDE</b> : Toggle character visibility per individual player.\n" ..
+"• <b>Search bar</b> : Type part of a username to filter the roster below.\n\n" ..
 "<b>[PANEL CONTROLS]</b>\n" ..
 "• <b>▼ CONFIGURATION MENUS</b> : Toggle the center layouts open/closed.\n" ..
 "• <b>–</b> button : Minimize the panel down to just the title bar.\n" ..
@@ -1359,10 +1379,7 @@ GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
 "• <b>×</b> button : Close the panel.\n" ..
 "• <b>🚫 HIDE GAME UI</b> button : Hides all game menus, hotbars, overhead names, chat bubbles, voice icons, and default Roblox icons.\n" ..
 "• <b>📏 Rule of Thirds</b> button : Toggles a 3x3 framing grid and crosshair.\n" ..
-"• <b>⟲ Reset Camera</b> button : If a player is selected, snaps the\n" ..
-"  camera back to its original framing near that character.\n\n" ..
-"<b>[CINEMATIC PLAYER TRACKING]</b>\n" ..
-"Select single or multiple players from the panel roster. The camera will dynamically compute the fluid midpoint tracking position seamlessly."
+"• <b>⟲ Reset Camera</b> button : Snaps the camera back to its original framing."
 GuideText.TextColor3 = Color3.fromRGB(200, 210, 230)
 GuideText.Font = Enum.Font.Gotham
 GuideText.TextSize = S(11)
@@ -1381,10 +1398,7 @@ ReturnButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 ReturnButton.Font = Enum.Font.GothamBold
 ReturnButton.TextSize = S(11)
 ReturnButton.Parent = InstructionsFrame
-
-local ReturnCorner = Instance.new("UICorner")
-ReturnCorner.CornerRadius = UDim.new(0, S(4))
-ReturnCorner.Parent = ReturnButton
+Instance.new("UICorner", ReturnButton).CornerRadius = UDim.new(0, S(4))
 
 ReturnButton.MouseButton1Click:Connect(function()
     showingInstructions = false
@@ -1393,16 +1407,14 @@ ReturnButton.MouseButton1Click:Connect(function()
     updateLayout(true)
 end)
 
--- Pop-up Tracking Status Notification Card
+-- Notification Card
 local NotificationFrame = Instance.new("Frame")
 NotificationFrame.Name = "NotificationFrame"
 NotificationFrame.Size = UDim2.new(0, 280, 0, 65)
 NotificationFrame.Position = UDim2.new(1, 300, 1, -85) 
-NotificationFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+NotificationFrame.BackgroundColor3 = Color3.fromRGB(10, 12, 20)
 NotificationFrame.BorderSizePixel = 0
 NotificationFrame.Parent = ScreenGui
-
-applyDarkGradient(NotificationFrame)
 
 local NotifCorner = Instance.new("UICorner")
 NotifCorner.CornerRadius = UDim.new(0, 6)
@@ -1410,9 +1422,8 @@ NotifCorner.Parent = NotificationFrame
 
 local NotifStroke = Instance.new("UIStroke")
 NotifStroke.Thickness = 1.5
-NotifStroke.Color = Color3.fromRGB(255, 255, 255)
+NotifStroke.Color = Color3.fromRGB(35, 45, 75)
 NotifStroke.Parent = NotificationFrame
-applyBorderGradient(NotifStroke)
 
 local NotifText = Instance.new("TextLabel")
 NotifText.Size = UDim2.new(1, -20, 1, 0)
@@ -1554,84 +1565,94 @@ end
 
 function refreshPlayerList()
     for _, child in ipairs(PlayerList:GetChildren()) do
-        if child:IsA("TextButton") then child:Destroy() end
+        if child:IsA("Frame") or child:IsA("TextButton") then child:Destroy() end
     end
     
     for _, p in ipairs(Players:GetPlayers()) do
         if searchQuery == "" or p.Name:lower():find(searchQuery, 1, true) or p.DisplayName:lower():find(searchQuery, 1, true) then
-        local isCurrentlySelected = (targets[p.UserId] ~= nil)
-        
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -S(12), 0, S(30))
-        btn.Text = "  " .. p.DisplayName .. " (@" .. p.Name .. ")"
-        
-        btn.TextColor3 = isCurrentlySelected and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(195, 200, 210)
-        btn.Font = isCurrentlySelected and Enum.Font.GothamBold or Enum.Font.Gotham
-        btn.TextSize = S(11)
-        btn.TextXAlignment = Enum.TextXAlignment.Left
-        btn.BorderSizePixel = 0
-        btn.Parent = PlayerList
-        
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, S(4))
-        btnCorner.Parent = btn
+            local isCurrentlySelected = (targets[p.UserId] ~= nil)
+            local isHidden = (hiddenPlayers[p.UserId] == true)
+            
+            local row = Instance.new("Frame")
+            row.Size = UDim2.new(1, 0, 0, S(30))
+            row.BackgroundColor3 = isCurrentlySelected and Color3.fromRGB(46, 57, 92) or Color3.fromRGB(22, 25, 38)
+            row.BorderSizePixel = 0
+            row.Parent = PlayerList
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0, S(4))
+            
+            local rowStroke = Instance.new("UIStroke")
+            rowStroke.Thickness = isCurrentlySelected and 1.5 or 1
+            rowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            rowStroke.Color = isCurrentlySelected and Color3.fromRGB(80, 140, 255) or Color3.fromRGB(35, 45, 75)
+            rowStroke.Parent = row
 
-        local btnStroke = Instance.new("UIStroke")
-        btnStroke.Thickness = isCurrentlySelected and 1.5 or 1
-        btnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        btnStroke.Parent = btn
+            local nameBtn = Instance.new("TextButton")
+            nameBtn.Size = UDim2.new(1, -S(66), 1, 0)
+            nameBtn.Position = UDim2.new(0, S(8), 0, 0)
+            nameBtn.BackgroundTransparency = 1
+            nameBtn.Text = p.DisplayName .. " (@" .. p.Name .. ")"
+            nameBtn.TextColor3 = isCurrentlySelected and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(195, 200, 210)
+            nameBtn.Font = isCurrentlySelected and Enum.Font.GothamBold or Enum.Font.Gotham
+            nameBtn.TextSize = S(11)
+            nameBtn.TextXAlignment = Enum.TextXAlignment.Left
+            nameBtn.Parent = row
 
-        if isCurrentlySelected then
-            btn.BackgroundColor3 = Color3.fromRGB(46, 57, 92) 
-            btnStroke.Color = Color3.fromRGB(80, 140, 255)    
-        else
-            btn.BackgroundColor3 = Color3.fromRGB(22, 25, 38)                              
-            applyBorderGradient(btnStroke)                       
-        end
+            nameBtn.MouseButton1Click:Connect(function()
+                if targets[p.UserId] then
+                    targets[p.UserId] = nil
+                else
+                    targets[p.UserId] = p
+                    trackingMode = "HumanoidRootPart"
+                    refreshTrackButtonColors()
+                    fovControl.setValue(70) 
+                    snapCameraToTarget(false)
+                end
+                refreshPlayerList()
+            end)
 
-        btn.MouseButton1Click:Connect(function()
-            if targets[p.UserId] then
-                targets[p.UserId] = nil
-                btn.TextColor3 = Color3.fromRGB(195, 200, 210)
-                btn.Font = Enum.Font.Gotham
-                
-                local grad = btn:FindFirstChildOfClass("UIGradient")
-                if grad then grad:Destroy() end
-                btnStroke:Destroy()
+            local hideBtn = Instance.new("TextButton")
+            hideBtn.Size = UDim2.new(0, S(54), 0, S(22))
+            hideBtn.Position = UDim2.new(1, -S(58), 0.5, -S(11))
+            hideBtn.BackgroundColor3 = isHidden and Color3.fromRGB(222, 60, 60) or Color3.fromRGB(40, 90, 180)
+            hideBtn.Text = isHidden and "UNHIDE" or "HIDE"
+            hideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            hideBtn.Font = Enum.Font.GothamBold
+            hideBtn.TextSize = S(10.5)
+            hideBtn.AutoButtonColor = false
+            hideBtn.Parent = row
+            Instance.new("UICorner", hideBtn).CornerRadius = UDim.new(0, S(4))
 
-                btn.BackgroundColor3 = Color3.fromRGB(22, 25, 38)
-                
-                btnStroke = Instance.new("UIStroke")
-                btnStroke.Thickness = 1
-                btnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-                btnStroke.Parent = btn
-                applyBorderGradient(btnStroke)
-            else
-                targets[p.UserId] = p
-                btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-                btn.Font = Enum.Font.GothamBold
-                
-                local grad = btn:FindFirstChildOfClass("UIGradient")
-                if grad then grad:Destroy() end 
-                
-                btn.BackgroundColor3 = Color3.fromRGB(46, 57, 92)
-                btnStroke.Color = Color3.fromRGB(80, 140, 255)
-                btnStroke.Thickness = 1.5
-                
-                trackingMode = "HumanoidRootPart"
-                refreshTrackButtonColors()
-                fovControl.setValue(70) 
-                
-                snapCameraToTarget(false)
-            end
-        end)
+            hideBtn.MouseButton1Click:Connect(function()
+                hiddenPlayers[p.UserId] = not hiddenPlayers[p.UserId]
+                updatePlayerVisibility(p)
+                refreshPlayerList()
+            end)
         end
     end
-    PlayerList.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + S(12))
+    PlayerList.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + S(8))
+    syncHideAllButtonState()
 end
 
-trackConnection(Players.PlayerAdded:Connect(refreshPlayerList))
-trackConnection(Players.PlayerRemoving:Connect(function(p) targets[p.UserId] = nil; refreshPlayerList() end))
+trackConnection(Players.PlayerAdded:Connect(function(p)
+    trackConnection(p.CharacterAdded:Connect(function()
+        task.wait(0.1)
+        updatePlayerVisibility(p)
+    end))
+    refreshPlayerList()
+end))
+
+trackConnection(Players.PlayerRemoving:Connect(function(p) 
+    targets[p.UserId] = nil
+    hiddenPlayers[p.UserId] = nil
+    refreshPlayerList() 
+end))
+
+for _, p in ipairs(Players:GetPlayers()) do
+    trackConnection(p.CharacterAdded:Connect(function()
+        task.wait(0.1)
+        updatePlayerVisibility(p)
+    end))
+end
 
 function toggleFreecam()
     active = not active
