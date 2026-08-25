@@ -78,6 +78,7 @@ local showingInstructions = false
 local minimized = false
 local targets = {} 
 local hiddenPlayers = {}
+local tripodMode = false
 
 local camCFrame = camera.CFrame
 local targetRotationX, targetRotationY = 0, 0
@@ -136,6 +137,7 @@ local refreshPlayerList
 local updateLayout
 local updatePlayerVisibility
 local updateAllPlayersVisibility
+local setMovementEnabled
 
 local playerGui = player:WaitForChild("PlayerGui", 10)
 if not playerGui then return end
@@ -359,16 +361,18 @@ MinimizeButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- Top Control Buttons (Freecam Status & Hide All Players)
+-- ============================================================
+-- TOP CONTROL BUTTONS (FREECAM, HIDE ALL, TRIPOD)
+-- ============================================================
 local ToggleFreecamButton = Instance.new("TextButton")
 ToggleFreecamButton.Name = "ToggleFreecamButton"
-ToggleFreecamButton.Size = UDim2.new(0.5, -S(18), 0, S(24))
+ToggleFreecamButton.Size = UDim2.new(1/3, -S(12), 0, S(24))
 ToggleFreecamButton.Position = UDim2.new(0, S(14), 0, S(6))
 ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) 
-ToggleFreecamButton.Text = "FREECAM STATUS : OFF"
+ToggleFreecamButton.Text = "FREECAM : OFF"
 ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
 ToggleFreecamButton.Font = Enum.Font.GothamBold
-ToggleFreecamButton.TextSize = S(10.5)
+ToggleFreecamButton.TextSize = S(9.5)
 ToggleFreecamButton.AutoButtonColor = false
 ToggleFreecamButton.Parent = ControlsFrame
 Instance.new("UICorner", ToggleFreecamButton).CornerRadius = UDim.new(0, S(4))
@@ -379,31 +383,72 @@ end)
 
 local HideAllPlayersButton = Instance.new("TextButton")
 HideAllPlayersButton.Name = "HideAllPlayersButton"
-HideAllPlayersButton.Size = UDim2.new(0.5, -S(18), 0, S(24))
-HideAllPlayersButton.Position = UDim2.new(0.5, S(4), 0, S(6))
+HideAllPlayersButton.AnchorPoint = Vector2.new(0.5, 0)
+HideAllPlayersButton.Size = UDim2.new(1/3, -S(12), 0, S(24))
+HideAllPlayersButton.Position = UDim2.new(0.5, 0, 0, S(6))
 HideAllPlayersButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
-HideAllPlayersButton.Text = "HIDE ALL PLAYER : OFF"
+HideAllPlayersButton.Text = "HIDE ALL : OFF"
 HideAllPlayersButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 HideAllPlayersButton.Font = Enum.Font.GothamBold
-HideAllPlayersButton.TextSize = S(10.5)
+HideAllPlayersButton.TextSize = S(9.5)
 HideAllPlayersButton.AutoButtonColor = false
 HideAllPlayersButton.Parent = ControlsFrame
 Instance.new("UICorner", HideAllPlayersButton).CornerRadius = UDim.new(0, S(4))
 
+local TripodButton = Instance.new("TextButton")
+TripodButton.Name = "TripodButton"
+TripodButton.AnchorPoint = Vector2.new(1, 0)
+TripodButton.Size = UDim2.new(1/3, -S(12), 0, S(24))
+TripodButton.Position = UDim2.new(1, -S(14), 0, S(6))
+TripodButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+TripodButton.Text = "TRIPOD : OFF"
+TripodButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+TripodButton.Font = Enum.Font.GothamBold
+TripodButton.TextSize = S(9.5)
+TripodButton.AutoButtonColor = false
+TripodButton.Parent = ControlsFrame
+Instance.new("UICorner", TripodButton).CornerRadius = UDim.new(0, S(4))
+
+local function toggleTripodMode()
+    tripodMode = not tripodMode
+    if tripodMode then
+        TripodButton.Text = "TRIPOD : ON"
+        TripodButton.BackgroundColor3 = Color3.fromRGB(70, 200, 55)
+        if active then
+            camCFrame = camera.CFrame
+            setMovementEnabled(true)
+        end
+    else
+        TripodButton.Text = "TRIPOD : OFF"
+        TripodButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
+        if active then
+            setMovementEnabled(false)
+            local center = getTrackingCenter()
+            if center then
+                orbitDistance = (camera.CFrame.Position - center).Magnitude
+                if orbitDistance < 4 then orbitDistance = 20 end
+                targetOrbitDistance = orbitDistance
+            end
+        end
+    end
+end
+
+TripodButton.MouseButton1Click:Connect(toggleTripodMode)
+
 local function updateStatusIndicator()
     if active then
-        ToggleFreecamButton.Text = "FREECAM STATUS : ON"
+        ToggleFreecamButton.Text = "FREECAM : ON"
         ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(140, 230, 130) 
         ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
     else
-        ToggleFreecamButton.Text = "FREECAM STATUS : OFF"
+        ToggleFreecamButton.Text = "FREECAM : OFF"
         ToggleFreecamButton.BackgroundColor3 = Color3.fromRGB(255, 150, 140) 
         ToggleFreecamButton.TextColor3 = Color3.fromRGB(0, 0, 0)
     end
 end
 
 -- ============================================================
--- PLAYER VISIBILITY MANAGER (LINKED DIRECTLY TO BUTTONS)
+-- PLAYER VISIBILITY MANAGER
 -- ============================================================
 function updatePlayerVisibility(p)
     if not p or not p.Character then return end
@@ -436,10 +481,10 @@ local function syncHideAllButtonState()
     end
 
     if total > 0 and hiddenCount == total then
-        HideAllPlayersButton.Text = "HIDE ALL PLAYER : ON"
+        HideAllPlayersButton.Text = "HIDE ALL : ON"
         HideAllPlayersButton.BackgroundColor3 = Color3.fromRGB(70, 200, 55)
     else
-        HideAllPlayersButton.Text = "HIDE ALL PLAYER : OFF"
+        HideAllPlayersButton.Text = "HIDE ALL : OFF"
         HideAllPlayersButton.BackgroundColor3 = Color3.fromRGB(40, 90, 180)
     end
 end
@@ -615,7 +660,7 @@ local function selectTrackingMode(mode)
     end
     refreshTrackButtonColors()
 
-    if active then
+    if active and not tripodMode then
         local center = getTrackingCenter()
         if center then
             orbitDistance = (camera.CFrame.Position - center).Magnitude
@@ -669,7 +714,7 @@ SetPivotButton.MouseButton1Click:Connect(function()
     if trackingMode ~= "Custom" then
         selectTrackingMode("Custom")
     else
-        if active then
+        if active and not tripodMode then
             orbitDistance = (camera.CFrame.Position - targetPos).Magnitude
             if orbitDistance < 4 then orbitDistance = 20 end
             targetOrbitDistance = orbitDistance
@@ -1369,6 +1414,7 @@ GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
 "• <b>Tracking Point</b> buttons : Head, Body, or Custom Point toggles.\n" ..
 "• <b>🎯 Set Custom Pivot</b> : Raycasts directly forward from the center of your screen to lock orbit onto a specific prop, wall, or floor.\n" ..
 "• <b>× Button (Next to Pivot)</b> : Instantly clears targets/pivots and returns to free-fly mode.\n" ..
+"• <b>TRIPOD : ON/OFF</b> : Locks the freecam stationarily so you can walk your player around freely while keeping camera framing stationary or tracking.\n" ..
 "• <b>HIDE ALL PLAYER</b> : Toggle character visibility globally (syncs with player list).\n" ..
 "• <b>HIDE / UNHIDE</b> : Toggle character visibility per individual player.\n" ..
 "• <b>Search bar</b> : Type part of a username to filter the roster below.\n\n" ..
@@ -1452,7 +1498,7 @@ local function getHumanoidRootPart()
     return character:FindFirstChild("HumanoidRootPart")
 end
 
-local function setMovementEnabled(enabled)
+function setMovementEnabled(enabled)
     pcall(function()
         local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule", 5))
         if PlayerModule then
@@ -1498,6 +1544,16 @@ function getTrackingCenter()
         end
     end
     
+    -- Fallback to LocalPlayer's Character if no targets are selected in roster
+    if #activePositions == 0 and (trackingMode == "Head" or trackingMode == "HumanoidRootPart") then
+        if player.Character then
+            local part = player.Character:FindFirstChild(trackingMode)
+            if part then
+                table.insert(activePositions, part.Position)
+            end
+        end
+    end
+    
     if #activePositions > 0 then
         local trackingCenter = Vector3.new(0, 0, 0)
         for _, pos in ipairs(activePositions) do
@@ -1518,6 +1574,20 @@ local function snapCameraToTarget(resetAngles)
 
     camera.CameraType = Enum.CameraType.Scriptable
 
+    local framedCenter = center + Vector3.new(0, cameraHeightOffset, 0)
+
+    if tripodMode then
+        local lookCFrame = CFrame.lookAt(camCFrame.Position, framedCenter)
+        local rx, ry, _ = lookCFrame:ToEulerAnglesYXZ()
+        targetRotationX = math.deg(ry)
+        targetRotationY = math.clamp(math.deg(rx), -85, 85)
+        rotationX = targetRotationX
+        rotationY = targetRotationY
+        rotationZ = 0
+        camera.CFrame = lookCFrame
+        return
+    end
+
     if resetAngles then
         targetRotationX = 0
         targetRotationY = DEFAULT_ROTATION_Y
@@ -1528,7 +1598,6 @@ local function snapCameraToTarget(resetAngles)
     targetOrbitDistance = DEFAULT_ORBIT_DISTANCE
     orbitDistance = DEFAULT_ORBIT_DISTANCE
 
-    local framedCenter = center + Vector3.new(0, cameraHeightOffset, 0)
     local rotationMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0) * CFrame.Angles(0, 0, math.rad(rotationZ))
     local targetPos = framedCenter + (rotationMatrix * Vector3.new(0, 0, orbitDistance))
 
@@ -1660,7 +1729,7 @@ function toggleFreecam()
     updateStatusIndicator()
     if active then
         savedDefaultFov = camera.FieldOfView
-        setMovementEnabled(false)
+        setMovementEnabled(tripodMode)
         camera.CameraType = Enum.CameraType.Scriptable
         camCFrame = camera.CFrame
 
@@ -1672,11 +1741,13 @@ function toggleFreecam()
         rotationX = targetRotationX
         rotationY = targetRotationY
 
-        local center = getTrackingCenter()
-        if center then
-            orbitDistance = (camera.CFrame.Position - center).Magnitude
-            if orbitDistance < 4 then orbitDistance = 20 end
-            targetOrbitDistance = orbitDistance
+        if not tripodMode then
+            local center = getTrackingCenter()
+            if center then
+                orbitDistance = (camera.CFrame.Position - center).Magnitude
+                if orbitDistance < 4 then orbitDistance = 20 end
+                targetOrbitDistance = orbitDistance
+            end
         end
     else
         setMovementEnabled(true)
@@ -1729,7 +1800,7 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
         toggleDOF()
     end
     
-    if active then
+    if active and not tripodMode then
         if input.KeyCode == Enum.KeyCode.W then movement.W = 1 end
         if input.KeyCode == Enum.KeyCode.S then movement.S = 1 end
         if input.KeyCode == Enum.KeyCode.A then movement.A = 1 end
@@ -1739,7 +1810,9 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
         if input.KeyCode == Enum.KeyCode.Z then movement.Z = 1 end
         if input.KeyCode == Enum.KeyCode.X then movement.X = 1 end
         if input.KeyCode == Enum.KeyCode.C then rotationZ = 0 end
-        
+    end
+
+    if active then
         -- Click to Target Character Feature
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             local mouseLocation = UserInputService:GetMouseLocation()
@@ -1785,14 +1858,16 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
 end))
 
 trackConnection(UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.W then movement.W = 0 end
-    if input.KeyCode == Enum.KeyCode.S then movement.S = 0 end
-    if input.KeyCode == Enum.KeyCode.A then movement.A = 0 end
-    if input.KeyCode == Enum.KeyCode.D then movement.D = 0 end
-    if input.KeyCode == Enum.KeyCode.E then movement.E = 0 end
-    if input.KeyCode == Enum.KeyCode.Q then movement.Q = 0 end
-    if input.KeyCode == Enum.KeyCode.Z then movement.Z = 0 end
-    if input.KeyCode == Enum.KeyCode.X then movement.X = 0 end
+    if not tripodMode then
+        if input.KeyCode == Enum.KeyCode.W then movement.W = 0 end
+        if input.KeyCode == Enum.KeyCode.S then movement.S = 0 end
+        if input.KeyCode == Enum.KeyCode.A then movement.A = 0 end
+        if input.KeyCode == Enum.KeyCode.D then movement.D = 0 end
+        if input.KeyCode == Enum.KeyCode.E then movement.E = 0 end
+        if input.KeyCode == Enum.KeyCode.Q then movement.Q = 0 end
+        if input.KeyCode == Enum.KeyCode.Z then movement.Z = 0 end
+        if input.KeyCode == Enum.KeyCode.X then movement.X = 0 end
+    end
 end))
 
 trackConnection(UserInputService.InputChanged:Connect(function(input)
@@ -1835,55 +1910,78 @@ getgenv().IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(fu
     local moveLerp = math.clamp(movementSmoothness, 1, 30)
     local lerpAlpha = math.clamp(dt * moveLerp, 0, 1)
     
-    smoothedMovement.W = smoothedMovement.W + (movement.W - smoothedMovement.W) * lerpAlpha
-    smoothedMovement.S = smoothedMovement.S + (movement.S - smoothedMovement.S) * lerpAlpha
-    smoothedMovement.A = smoothedMovement.A + (movement.A - smoothedMovement.A) * lerpAlpha
-    smoothedMovement.D = smoothedMovement.D + (movement.D - smoothedMovement.D) * lerpAlpha
-    smoothedMovement.E = smoothedMovement.E + (movement.E - smoothedMovement.E) * lerpAlpha
-    smoothedMovement.Q = smoothedMovement.Q + (movement.Q - smoothedMovement.Q) * lerpAlpha
-    smoothedMovement.Z = smoothedMovement.Z + (movement.Z - smoothedMovement.Z) * lerpAlpha
-    smoothedMovement.X = smoothedMovement.X + (movement.X - smoothedMovement.X) * lerpAlpha
+    if not tripodMode then
+        smoothedMovement.W = smoothedMovement.W + (movement.W - smoothedMovement.W) * lerpAlpha
+        smoothedMovement.S = smoothedMovement.S + (movement.S - smoothedMovement.S) * lerpAlpha
+        smoothedMovement.A = smoothedMovement.A + (movement.A - smoothedMovement.A) * lerpAlpha
+        smoothedMovement.D = smoothedMovement.D + (movement.D - smoothedMovement.D) * lerpAlpha
+        smoothedMovement.E = smoothedMovement.E + (movement.E - smoothedMovement.E) * lerpAlpha
+        smoothedMovement.Q = smoothedMovement.Q + (movement.Q - smoothedMovement.Q) * lerpAlpha
+        smoothedMovement.Z = smoothedMovement.Z + (movement.Z - smoothedMovement.Z) * lerpAlpha
+        smoothedMovement.X = smoothedMovement.X + (movement.X - smoothedMovement.X) * lerpAlpha
+    else
+        for k in pairs(smoothedMovement) do
+            smoothedMovement[k] = 0
+        end
+    end
 
     rotationZ = rotationZ + (tiltSpeed * dt * (smoothedMovement.Z - smoothedMovement.X))
 
     local trackingCenter = getTrackingCenter()
     
     if trackingCenter then
-        local sideAngularSpeed = currentSideSpeed * 65 * dt 
-        local forwardZoomSpeed = currentForwardSpeed * 10 * dt
-        local verticalAngularSpeed = sideAngularSpeed * verticalSpeed
-        
-        targetOrbitDistance = math.max(targetOrbitDistance + (forwardZoomSpeed * (smoothedMovement.S - smoothedMovement.W)), 2)
-        
-        local distanceLerpSpeed = math.clamp(movementSmoothness, 1, 30)
-        orbitDistance = orbitDistance + (targetOrbitDistance - orbitDistance) * math.clamp(dt * distanceLerpSpeed, 0, 1)
-
-        targetRotationX = targetRotationX + (sideAngularSpeed * (smoothedMovement.D - smoothedMovement.A))
-        targetRotationY = math.clamp(targetRotationY + (verticalAngularSpeed * (smoothedMovement.Q - smoothedMovement.E)), -85, 85)
-    end
-
-    local panLerpSpeed = math.clamp(mouseSmoothness, 1, 30)
-    rotationX = rotationX + (targetRotationX - rotationX) * math.clamp(dt * panLerpSpeed, 0, 1)
-    rotationY = rotationY + (targetRotationY - rotationY) * math.clamp(dt * panLerpSpeed, 0, 1)
-
-    local rotationMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0) * CFrame.Angles(0, 0, math.rad(rotationZ))
-
-    if trackingCenter then
         local framedCenter = trackingCenter + Vector3.new(0, cameraHeightOffset, 0)
-        local targetPos = framedCenter + (rotationMatrix * Vector3.new(0, 0, orbitDistance))
         
-        camCFrame = CFrame.new(targetPos) * rotationMatrix
-        
-        local mappedLerpSpeed = 31 - math.clamp(smoothingWeight, 1, 30)
-        camera.CFrame = camera.CFrame:Lerp(camCFrame, math.clamp(dt * mappedLerpSpeed, 0, 1))
+        if tripodMode then
+            local lookCFrame = CFrame.lookAt(camCFrame.Position, framedCenter) * CFrame.Angles(0, 0, math.rad(rotationZ))
+            local mappedLerpSpeed = 31 - math.clamp(smoothingWeight, 1, 30)
+            camera.CFrame = camera.CFrame:Lerp(lookCFrame, math.clamp(dt * mappedLerpSpeed, 0, 1))
+
+            local rx, ry, _ = camera.CFrame:ToEulerAnglesYXZ()
+            targetRotationX = math.deg(ry)
+            targetRotationY = math.clamp(math.deg(rx), -85, 85)
+            rotationX = targetRotationX
+            rotationY = targetRotationY
+        else
+            local sideAngularSpeed = currentSideSpeed * 65 * dt 
+            local forwardZoomSpeed = currentForwardSpeed * 10 * dt
+            local verticalAngularSpeed = sideAngularSpeed * verticalSpeed
+            
+            targetOrbitDistance = math.max(targetOrbitDistance + (forwardZoomSpeed * (smoothedMovement.S - smoothedMovement.W)), 2)
+            
+            local distanceLerpSpeed = math.clamp(movementSmoothness, 1, 30)
+            orbitDistance = orbitDistance + (targetOrbitDistance - orbitDistance) * math.clamp(dt * distanceLerpSpeed, 0, 1)
+
+            targetRotationX = targetRotationX + (sideAngularSpeed * (smoothedMovement.D - smoothedMovement.A))
+            targetRotationY = math.clamp(targetRotationY + (verticalAngularSpeed * (smoothedMovement.Q - smoothedMovement.E)), -85, 85)
+
+            local panLerpSpeed = math.clamp(mouseSmoothness, 1, 30)
+            rotationX = rotationX + (targetRotationX - rotationX) * math.clamp(dt * panLerpSpeed, 0, 1)
+            rotationY = rotationY + (targetRotationY - rotationY) * math.clamp(dt * panLerpSpeed, 0, 1)
+
+            local rotationMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0) * CFrame.Angles(0, 0, math.rad(rotationZ))
+            local targetPos = framedCenter + (rotationMatrix * Vector3.new(0, 0, orbitDistance))
+            
+            camCFrame = CFrame.new(targetPos) * rotationMatrix
+            
+            local mappedLerpSpeed = 31 - math.clamp(smoothingWeight, 1, 30)
+            camera.CFrame = camera.CFrame:Lerp(camCFrame, math.clamp(dt * mappedLerpSpeed, 0, 1))
+        end
     else
-        local horizontalDirection = Vector3.new((smoothedMovement.D - smoothedMovement.A) * currentSideSpeed, 0, (smoothedMovement.S - smoothedMovement.W) * currentForwardSpeed)
-        local moveMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0)
-        
-        local moveVector = moveMatrix:VectorToWorldSpace(horizontalDirection) * (15 * dt)
-        moveVector = moveVector + Vector3.new(0, (smoothedMovement.E - smoothedMovement.Q) * (currentForwardSpeed * verticalSpeed * 15 * dt), 0)
-        camCFrame = camCFrame + moveVector
-        
+        if not tripodMode then
+            local horizontalDirection = Vector3.new((smoothedMovement.D - smoothedMovement.A) * currentSideSpeed, 0, (smoothedMovement.S - smoothedMovement.W) * currentForwardSpeed)
+            local moveMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0)
+            
+            local moveVector = moveMatrix:VectorToWorldSpace(horizontalDirection) * (15 * dt)
+            moveVector = moveVector + Vector3.new(0, (smoothedMovement.E - smoothedMovement.Q) * (currentForwardSpeed * verticalSpeed * 15 * dt), 0)
+            camCFrame = camCFrame + moveVector
+        end
+
+        local panLerpSpeed = math.clamp(mouseSmoothness, 1, 30)
+        rotationX = rotationX + (targetRotationX - rotationX) * math.clamp(dt * panLerpSpeed, 0, 1)
+        rotationY = rotationY + (targetRotationY - rotationY) * math.clamp(dt * panLerpSpeed, 0, 1)
+
+        local rotationMatrix = CFrame.Angles(0, math.rad(rotationX), 0) * CFrame.Angles(math.rad(rotationY), 0, 0) * CFrame.Angles(0, 0, math.rad(rotationZ))
         local rawTargetCFrame = CFrame.new(camCFrame.Position) * rotationMatrix
         if isPanActive then
             camera.CFrame = rawTargetCFrame
