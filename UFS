@@ -1,6 +1,4 @@
--- ==========================================
 -- 1. AUTO CLEANUP & PRE-EXECUTION SETUP
--- ==========================================
 local genv = (getgenv and getgenv()) or _G
 
 if genv.CFS_Connections then
@@ -15,7 +13,7 @@ local function trackConnection(conn)
     return conn
 end
 
--- Restore Transparansi Karakter Sebelumnya
+-- Restore previous character transparency
 if genv.CFS_HiddenParts then
     for part, originalTrans in pairs(genv.CFS_HiddenParts) do
         pcall(function()
@@ -31,20 +29,20 @@ if genv.CFS_HiddenParts then
 end
 genv.CFS_HiddenParts = {}
 
--- Restore Exposure Sebelumnya
+-- Restore previous exposure
 if genv.CFS_DefaultExposure ~= nil then
     pcall(function()
         game:GetService("Lighting").ExposureCompensation = genv.CFS_DefaultExposure
     end)
 end
 
--- Hapus ColorCorrection Effect Lama
+-- Remove old ColorCorrection effect
 pcall(function()
     local oldEffect = game:GetService("Lighting"):FindFirstChild("CFS_VisualModifier")
     if oldEffect then oldEffect:Destroy() end
 end)
 
--- Restore State Karakter & Kamera
+-- Restore character & camera state
 if genv.IY_Style_Freecam then
     genv.IY_Style_Freecam:Disconnect()
     genv.IY_Style_Freecam = nil
@@ -54,14 +52,13 @@ if genv.IY_Style_Freecam then
     camera.FieldOfView = 70
     
     game:GetService("UserInputService").MouseBehavior = Enum.MouseBehavior.Default
-    pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
     
     local oldUi = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("FreecamUI")
     if oldUi then oldUi:Destroy() end
 
     pcall(function()
         local player = game:GetService("Players").LocalPlayer
-        local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule"))
+        local PlayerModule = (require :: any)(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
         PlayerModule:GetControls():Enable()
         
         if player.Character then
@@ -76,9 +73,7 @@ if genv.IY_Style_Freecam then
     end)
 end
 
--- ==========================================
--- 2. SERVICES & VARIABEL UTAMA
--- ==========================================
+-- 2. SERVICES & MAIN VARIABLES
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -104,7 +99,7 @@ cc.Parent = Lighting
 local SCALE = 1.0
 local function S(n) return math.floor(n * SCALE + 0.5) end
 
--- Keybinds Default
+-- Default keybinds
 local TOGGLE_KEY = Enum.KeyCode.T     
 local MENU_KEY = Enum.KeyCode.F 
 local HIDE_UI_KEY = Enum.KeyCode.B
@@ -114,7 +109,7 @@ local DOF_TOGGLE_KEY = Enum.KeyCode.M
 local SPEED_DOWN_KEY = Enum.KeyCode.LeftBracket  
 local SPEED_UP_KEY = Enum.KeyCode.RightBracket   
 
--- Status State
+-- Status states
 local active = false
 local mouseLocked = false
 local menuVisible = false
@@ -127,18 +122,18 @@ local rotationX, rotationY = 0, 0
 local rotationZ = 0
 local savedDefaultFov = camera.FieldOfView
 
--- Hide & Tripod States
+-- Hide & Tripod states
 local hideAllActive = false
 local tripodActive = false
 local tripodPosition = nil
 local hiddenPlayers = {}
 
--- Orbit Variables
+-- Orbit variables
 local orbitDistance = 20 
 local targetOrbitDistance = 20 
 local customOrbitCenter = camera.CFrame.Position + (camera.CFrame.LookVector * 20)
 
--- Movement Tuning
+-- Movement tuning
 local mouseSmoothness = 15
 local movementSmoothness = 12 
 local forwardSpeed = 1.0
@@ -168,7 +163,7 @@ local trackingMode = nil
 local movement = {W = 0, A = 0, S = 0, D = 0, E = 0, Q = 0, Z = 0, X = 0}
 local smoothedMovement = {W = 0, A = 0, S = 0, D = 0, E = 0, Q = 0, Z = 0, X = 0}
 
--- Forward Declarations
+-- Forward declarations
 local getTrackingCenter
 local toggleFreecam
 local toggleGridOverlay
@@ -178,6 +173,7 @@ local toggleDOF
 local refreshPlayerList
 local setCharacterHidden
 local resetCameraOrbit
+local snapCameraToTarget
 local updateLayout
 local refreshTrackButtonColors
 local updateHideAllButton
@@ -200,9 +196,7 @@ ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = playerGui
 
--- ==========================================
 -- 3. GRID OVERLAY (RULE OF THIRDS)
--- ==========================================
 local GridOverlay = Instance.new("Frame")
 GridOverlay.Name = "GridOverlay"
 GridOverlay.Size = UDim2.new(1, 0, 1, 0)
@@ -256,7 +250,7 @@ crossHairH.AnchorPoint = Vector2.new(0.5, 0.5)
 crossHairH.BackgroundColor3 = lineColor
 crossHairH.BorderSizePixel = 0
 
--- Canvas Configuration
+-- Canvas configuration
 local FULL_CANVAS_WIDTH = S(360) 
 local HEADER_HEIGHT = S(35)
 local INSTRUCTIONS_HEIGHT = S(530)
@@ -354,7 +348,7 @@ local function toggleMenu(show)
     end
 end
 
--- Header Buttons
+-- Header buttons
 local CloseButton = Instance.new("TextButton")
 CloseButton.Name = "CloseButton"
 CloseButton.Size = UDim2.new(0, S(24), 0, S(24))
@@ -435,9 +429,7 @@ MinimizeButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- ============================================================
 -- 4. TOP ACTION BUTTONS: FREECAM, HIDE ALL, TRIPOD
--- ============================================================
 local TopButtonsContainer = Instance.new("Frame")
 TopButtonsContainer.Name = "TopButtonsContainer"
 TopButtonsContainer.Size = UDim2.new(1, -S(28), 0, S(24))
@@ -571,7 +563,7 @@ HideAllTopButton.MouseButton1Click:Connect(function()
     refreshPlayerList()
 end)
 
--- Mekanisme Tripod Toggle
+-- Tripod toggle mechanism
 TripodTopButton.MouseButton1Click:Connect(function()
     tripodActive = not tripodActive
     if tripodActive then
@@ -591,7 +583,7 @@ TripodTopButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- Auto Re-apply Hiding Saat Respawn
+-- Auto re-apply hiding on respawn
 trackConnection(Players.PlayerAdded:Connect(function(p)
     trackConnection(p.CharacterAdded:Connect(function(char)
         task.wait(0.2)
@@ -610,9 +602,7 @@ for _, p in ipairs(Players:GetPlayers()) do
     end))
 end
 
--- ============================================================
 -- 5. SEARCH BAR & PLAYER LIST
--- ============================================================
 local SearchBar = Instance.new("TextBox")
 SearchBar.Name = "SearchBar"
 SearchBar.Size = UDim2.new(1, -S(56), 0, S(22))
@@ -768,9 +758,7 @@ trackConnection(Players.PlayerRemoving:Connect(function(p)
     refreshPlayerList() 
 end))
 
--- ============================================================
 -- 6. TRACKING BUTTONS (HEAD, BODY, CUSTOM)
--- ============================================================
 local COLOR_ON = Color3.fromRGB(70, 200, 55)     
 local COLOR_OFF = Color3.fromRGB(222, 124, 126)  
 local COLOR_NEITHER = Color3.fromRGB(128, 128, 128) 
@@ -835,6 +823,9 @@ local function selectTrackingMode(mode)
         trackingMode = nil
     else
         trackingMode = mode
+        if mode == "Custom" and not customOrbitCenter then
+            customOrbitCenter = camera.CFrame.Position + (camera.CFrame.LookVector * 20)
+        end
     end
     refreshTrackButtonColors()
 
@@ -844,6 +835,12 @@ local function selectTrackingMode(mode)
             orbitDistance = (camera.CFrame.Position - center).Magnitude
             if orbitDistance < 4 then orbitDistance = 20 end
             targetOrbitDistance = orbitDistance
+
+            local rx, ry, _ = camera.CFrame:ToEulerAnglesYXZ()
+            targetRotationX = math.deg(ry)
+            targetRotationY = math.clamp(math.deg(rx), -85, 85)
+            rotationX = targetRotationX
+            rotationY = targetRotationY
         end
     end
 end
@@ -888,15 +885,18 @@ SetPivotButton.MouseButton1Click:Connect(function()
     end
     
     customOrbitCenter = targetPos
+    orbitDistance = (camera.CFrame.Position - targetPos).Magnitude
+    if orbitDistance < 4 then orbitDistance = 4 end
+    targetOrbitDistance = orbitDistance
+
+    local rx, ry, _ = camera.CFrame:ToEulerAnglesYXZ()
+    targetRotationX = math.deg(ry)
+    targetRotationY = math.clamp(math.deg(rx), -85, 85)
+    rotationX = targetRotationX
+    rotationY = targetRotationY
     
     if trackingMode ~= "Custom" then
         selectTrackingMode("Custom")
-    else
-        if active and not tripodActive then
-            orbitDistance = (camera.CFrame.Position - targetPos).Magnitude
-            if orbitDistance < 4 then orbitDistance = 20 end
-            targetOrbitDistance = orbitDistance
-        end
     end
 
     task.spawn(function()
@@ -931,9 +931,7 @@ end)
 
 refreshTrackButtonColors()
 
--- ============================================================
 -- 7. ACCORDION MENUS: SLIDERS, VISUALS, KEYS
--- ============================================================
 local SlidersToggleBtn = Instance.new("TextButton")
 SlidersToggleBtn.Size = UDim2.new(1, -S(28), 0, S(28))
 SlidersToggleBtn.Position = UDim2.new(0, S(14), 0, S(244))
@@ -1066,9 +1064,7 @@ KeysToggleBtn.MouseButton1Click:Connect(function()
     updateLayout(true)
 end)
 
--- ============================================================
 -- 8. SLIDER & INPUT BUILDER
--- ============================================================
 local function createSliderControl(parent, yPos, opts)
     local format = opts.format or "%.2f"
 
@@ -1078,7 +1074,7 @@ local function createSliderControl(parent, yPos, opts)
     Label.BackgroundTransparency = 1
     Label.Text = opts.label
     Label.TextColor3 = Color3.fromRGB(200, 210, 230)
-    Label.Font = Enum.Font.GothamSemibold
+    Label.Font = Enum.Font.GothamMedium
     Label.TextSize = S(12)
     Label.TextXAlignment = Enum.TextXAlignment.Left
     Label.Parent = parent
@@ -1089,7 +1085,7 @@ local function createSliderControl(parent, yPos, opts)
     InputBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     InputBox.Text = string.format(format, opts.initial) .. (opts.suffix or "")
     InputBox.TextColor3 = Color3.fromRGB(0, 0, 0)
-    InputBox.Font = Enum.Font.GothamSemibold
+    InputBox.Font = Enum.Font.GothamMedium
     InputBox.TextSize = S(12)
     InputBox.ClipsDescendants = true
     InputBox.Parent = parent
@@ -1185,7 +1181,7 @@ local function createSliderControl(parent, yPos, opts)
     }
 end
 
--- A. Inisialisasi Slider Standar
+-- A. Standard slider initialization
 local fovControl = createSliderControl(SlidersContainer, S(6), {
     label = "Field of View", min = minFov, max = maxFov, initial = targetFov, format = "%.0f",
     onChange = function(val) targetFov = val end,
@@ -1231,7 +1227,7 @@ local movementSmoothControl = createSliderControl(SlidersContainer, S(438), {
     onChange = function(val) movementSmoothness = val end,
 })
 
--- B. Inisialisasi Visual Configuration
+-- B. Visual configuration initialization
 local syncVisualsActive = false
 local syncVisualsOffset = 0
 local isVisualSyncing = false
@@ -1327,7 +1323,7 @@ trackConnection(ResetVisualsBtn.MouseButton1Click:Connect(function()
     end
 end))
 
--- C. Inisialisasi Keybind Controls
+-- C. Keybind controls initialization
 local function createKeybindControl(parent, yPos, labelText, initialKey, onChange)
     local Label = Instance.new("TextLabel")
     Label.Size = UDim2.new(1, -S(100), 0, S(20))
@@ -1335,7 +1331,7 @@ local function createKeybindControl(parent, yPos, labelText, initialKey, onChang
     Label.BackgroundTransparency = 1
     Label.Text = labelText
     Label.TextColor3 = Color3.fromRGB(200, 210, 230)
-    Label.Font = Enum.Font.GothamSemibold
+    Label.Font = Enum.Font.GothamMedium
     Label.TextSize = S(12)
     Label.TextXAlignment = Enum.TextXAlignment.Left
     Label.Parent = parent
@@ -1381,9 +1377,7 @@ createKeybindControl(KeysContainer, S(102), "Toggle Grid Key", GRID_TOGGLE_KEY, 
 createKeybindControl(KeysContainer, S(134), "Toggle Fog Key", FOG_TOGGLE_KEY, function(newKey) FOG_TOGGLE_KEY = newKey end)
 createKeybindControl(KeysContainer, S(166), "Toggle DOF Key", DOF_TOGGLE_KEY, function(newKey) DOF_TOGGLE_KEY = newKey end)
 
--- ============================================================
 -- 9. BOTTOM CONTAINER BUTTONS
--- ============================================================
 function toggleGridOverlay()
     GridOverlay.Visible = not GridOverlay.Visible
     if GridOverlay.Visible then
@@ -1413,6 +1407,7 @@ GridOverlayButton.MouseButton1Click:Connect(toggleGridOverlay)
 local uiHidden = false
 local hiddenSavedGuis = {}
 local uiHideConnections = {}
+local savedCoreGuiStates = {}
 local originalTextBubbleChat = true
 local originalLegacyBubbleChat = true
 local originalProximityPrompt = true 
@@ -1467,6 +1462,17 @@ end
 function toggleGameUI()
     uiHidden = not uiHidden
     if uiHidden then
+        savedCoreGuiStates = {}
+        for _, coreType in ipairs(Enum.CoreGuiType:GetEnumItems()) do
+            if coreType ~= Enum.CoreGuiType.All then
+                local success, isEnabled = pcall(function()
+                    return StarterGui:GetCoreGuiEnabled(coreType)
+                end)
+                if success then
+                    savedCoreGuiStates[coreType] = isEnabled
+                end
+            end
+        end
         pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
         
         pcall(function()
@@ -1517,7 +1523,13 @@ function toggleGameUI()
     else
         for _, conn in ipairs(uiHideConnections) do pcall(function() conn:Disconnect() end) end
         uiHideConnections = {}
-        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
+        
+        for coreType, wasEnabled in pairs(savedCoreGuiStates) do
+            pcall(function()
+                StarterGui:SetCoreGuiEnabled(coreType, wasEnabled)
+            end)
+        end
+        savedCoreGuiStates = {}
         
         pcall(function()
             if TextChatService:FindFirstChild("BubbleChatConfiguration") then 
@@ -1671,13 +1683,11 @@ ResetCameraButton.MouseButton1Click:Connect(function()
     end)
 end)
 
--- Inisialisasi Posisi & Ukuran Pertama Kali
+-- Initial position & size setup
 updateLayout(false)
 refreshPlayerList()
 
--- ============================================================
 -- 10. INSTRUCTIONS PANE
--- ============================================================
 local GuideScroller = Instance.new("ScrollingFrame")
 GuideScroller.Size = UDim2.new(0.9, 0, 0.8, 0)
 GuideScroller.Position = UDim2.new(0.05, 0, 0.02, 0)
@@ -1702,44 +1712,44 @@ local GuideText = Instance.new("TextLabel")
 GuideText.Size = UDim2.new(1, -S(16), 1, 0)
 GuideText.Position = UDim2.new(0, S(8), 0, S(5))
 GuideText.BackgroundTransparency = 1
-GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n" ..
-"• <b>Toggle Key</b> : Turn Freecam On/Off (Rebindable in panel)\n" ..
-"• <b>Menu Key</b> : Open/Close this layout (Rebindable in panel)\n" ..
-"• <b>Grid Toggle Key</b> : Turn Rule of Thirds On/Off (Rebindable in panel)\n\n" ..
-"<b>[ORBIT CONTROL MOVEMENTS]</b>\n" ..
-"• <b>A / D</b> : Orbit Left / Right around targets\n" ..
-"• <b>E / Q</b> : Orbit Vertically Up / Down\n" ..
-"• <b>W / S</b> : Zoom Camera Distance In / Out\n" ..
-"• <b>Hold Left Shift</b> : Mouse lock toggle / speed boost\n" ..
-"• <b>Hold Left Ctrl</b> : 2.0x Speed reduction for precise control\n" ..
-"• <b>Shift Key</b> : Toggle Mouse Lock (No RMB holding needed)\n" ..
-"• <b>Hold Right Click</b> : Lock Cursor & Look Around\n" ..
-"• <b>Left Click (On Character)</b> : Instantly snap orbit to that character.\n" ..
-"• <b>Z / X</b> : Tilt Camera Left / Right (unlimited rotation)\n" ..
-"• <b>C</b> : Reset Camera Tilt to 0°\n\n" ..
-"<b>[SPEED MODIFIERS & SLIDERS]</b>\n" ..
-"• <b>] (Right Bracket)</b> : Increase default speeds\n" ..
-"• <b>[ (Left Bracket)</b> : Decrease default speeds\n" ..
-"• <b>Camera Height Offset</b> slider shifts the framing up/down.\n" ..
-"• While Freecam is active, WASD only moves the camera.\n" ..
-"• <b>Mouse Scroll Wheel</b> : Smooth FOV Zoom in/out.\n" ..
-"• <b>Scroll Sensitivity</b> slider : Adjust degrees per scroll notch (1 to 10).\n" ..
-"• <b>Tracking Point</b> buttons : Head, Body, or Custom Point toggles.\n" ..
-"• <b>🎯 Set Custom Pivot</b> : Raycasts directly forward to lock orbit on prop/floor.\n" ..
-"• <b>× Button (Next to Pivot)</b> : Clears targets/pivots and returns to free-fly.\n" ..
-"• <b>Hide All / Individual Hide</b> : Hide all characters or specific players.\n" ..
-"• <b>Tripod Mode</b> : Locks camera in place. Allows player movement & auto-aim tracking.\n\n" ..
-"<b>[PANEL CONTROLS]</b>\n" ..
-"• <b>▼ CONFIGURATION MENUS</b> : Toggle the center layouts open/closed.\n" ..
-"• <b>Visual Configuration</b> : Adjust Exposure, Brightness, Contrast, Saturation with typable text inputs.\n" ..
-"• <b>–</b> button : Minimize the panel down to just the title bar.\n" ..
-"• <b>?</b> button : Toggle this instructions view.\n" ..
-"• <b>×</b> button : Close the panel.\n" ..
-"• <b>🚫 HIDE GAME UI</b> button : Hides all game menus, hotbars, overheads, chat bubbles, voice icons.\n" ..
-"• <b>📏 Rule of Thirds</b> button : Toggles a 3x3 framing grid and crosshair.\n" ..
-"• <b>⟲ Reset Camera</b> button : Snaps camera back to original framing near character.\n\n" ..
-"<b>[CINEMATIC PLAYER TRACKING]</b>\n" ..
-"Select single or multiple players from the panel roster. The camera dynamically computes fluid tracking positions."
+GuideText.Text = "<b>[SYSTEM CONTROLS]</b>\n"
+    .. "• <b>Toggle Key</b> : Turn Freecam On/Off (Rebindable in panel)\n"
+    .. "• <b>Menu Key</b> : Open/Close this layout (Rebindable in panel)\n"
+    .. "• <b>Grid Toggle Key</b> : Turn Rule of Thirds On/Off (Rebindable in panel)\n\n"
+    .. "<b>[ORBIT CONTROL MOVEMENTS]</b>\n"
+    .. "• <b>A / D</b> : Orbit Left / Right around targets\n"
+    .. "• <b>E / Q</b> : Orbit Vertically Up / Down\n"
+    .. "• <b>W / S</b> : Zoom Camera Distance In / Out\n"
+    .. "• <b>Hold Left Shift</b> : Mouse lock toggle / speed boost\n"
+    .. "• <b>Hold Left Ctrl</b> : 2.0x Speed reduction for precise control\n"
+    .. "• <b>Shift Key</b> : Toggle Mouse Lock (No RMB holding needed)\n"
+    .. "• <b>Hold Right Click</b> : Lock Cursor & Look Around\n"
+    .. "• <b>Left Click (On Character)</b> : Instantly snap orbit to that character.\n"
+    .. "• <b>Z / X</b> : Tilt Camera Left / Right (unlimited rotation)\n"
+    .. "• <b>C</b> : Reset Camera Tilt to 0°\n\n"
+    .. "<b>[SPEED MODIFIERS & SLIDERS]</b>\n"
+    .. "• <b>] (Right Bracket)</b> : Increase default speeds\n"
+    .. "• <b>[ (Left Bracket)</b> : Decrease default speeds\n"
+    .. "• <b>Camera Height Offset</b> slider shifts the framing up/down.\n"
+    .. "• While Freecam is active, WASD only moves the camera.\n"
+    .. "• <b>Mouse Scroll Wheel</b> : Smooth FOV Zoom in/out.\n"
+    .. "• <b>Scroll Sensitivity</b> slider : Adjust degrees per scroll notch (1 to 10).\n"
+    .. "• <b>Tracking Point</b> buttons : Head, Body, or Custom Point toggles.\n"
+    .. "• <b>🎯 Set Custom Pivot</b> : Raycasts directly forward to lock orbit on prop/floor.\n"
+    .. "• <b>× Button (Next to Pivot)</b> : Clears targets/pivots and returns to free-fly.\n"
+    .. "• <b>Hide All / Individual Hide</b> : Hide all characters or specific players.\n"
+    .. "• <b>Tripod Mode</b> : Locks camera in place. Allows player movement & auto-aim tracking.\n\n"
+    .. "<b>[PANEL CONTROLS]</b>\n"
+    .. "• <b>▼ CONFIGURATION MENUS</b> : Toggle the center layouts open/closed.\n"
+    .. "• <b>Visual Configuration</b> : Adjust Exposure, Brightness, Contrast, Saturation with typable text inputs.\n"
+    .. "• <b>–</b> button : Minimize the panel down to just the title bar.\n"
+    .. "• <b>?</b> button : Toggle this instructions view.\n"
+    .. "• <b>×</b> button : Close the panel.\n"
+    .. "• <b>🚫 HIDE GAME UI</b> button : Hides all game menus, hotbars, overheads, chat bubbles, voice icons.\n"
+    .. "• <b>📏 Rule of Thirds</b> button : Toggles a 3x3 framing grid and crosshair.\n"
+    .. "• <b>⟲ Reset Camera</b> button : Snaps camera back to original framing near character.\n\n"
+    .. "<b>[CINEMATIC PLAYER TRACKING]</b>\n"
+    .. "Select single or multiple players from the panel roster. The camera dynamically computes fluid tracking positions."
 GuideText.TextColor3 = Color3.fromRGB(200, 210, 230)
 GuideText.Font = Enum.Font.Gotham
 GuideText.TextSize = S(11)
@@ -1767,7 +1777,7 @@ ReturnButton.MouseButton1Click:Connect(function()
     updateLayout(true)
 end)
 
--- Notification Slide-In
+-- Notification slide-in animation
 local NotificationFrame = Instance.new("Frame")
 NotificationFrame.Name = "NotificationFrame"
 NotificationFrame.Size = UDim2.new(0, 280, 0, 65)
@@ -1800,9 +1810,7 @@ NotifText.RichText = true
 NotifText.TextWrapped = true
 NotifText.Parent = NotificationFrame
 
--- ============================================================
 -- 11. CORE CAMERA & TRACKING RUNTIME
--- ============================================================
 local savedWalkSpeed = 16
 local savedJumpPower = 50
 
@@ -1820,7 +1828,7 @@ end
 
 function setMovementEnabled(enabled)
     pcall(function()
-        local PlayerModule = require(player.PlayerScripts:WaitForChild("PlayerModule", 5))
+        local PlayerModule = (require :: any)(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule", 5))
         if PlayerModule then
             local controls = PlayerModule:GetControls()
             if enabled then controls:Enable() else controls:Disable() end
@@ -1867,7 +1875,7 @@ function getTrackingCenter()
         end
     end
     
-    -- Jika tidak ada pemain lain yang dipilih di roster, otomatis track karakter player sendiri
+    -- If no other player is selected in roster, automatically track own character
     if not hasTargetSelected and player.Character then
         local part = player.Character:FindFirstChild(trackingMode)
         if part then
@@ -1888,7 +1896,7 @@ end
 local DEFAULT_ORBIT_DISTANCE = 12
 local DEFAULT_ROTATION_Y = -12
 
-local function snapCameraToTarget(resetAngles)
+function snapCameraToTarget(resetAngles)
     if not active then return end
     local center = getTrackingCenter()
     if not center then return end
@@ -1982,9 +1990,7 @@ function toggleFreecam()
     end
 end
 
--- ============================================================
 -- 12. EVENT LISTENERS & RUNTIME LOOP
--- ============================================================
 trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
     if active then
         if input.KeyCode == SPEED_UP_KEY then
@@ -2077,11 +2083,18 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
                     else
                         local focusPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head") or hit.Instance
                         customOrbitCenter = focusPart.Position
+                        orbitDistance = (camera.CFrame.Position - customOrbitCenter).Magnitude
+                        if orbitDistance < 4 then orbitDistance = 4 end
+                        targetOrbitDistance = orbitDistance
                         
                         trackingMode = "Custom"
                         refreshTrackButtonColors()
                         if not tripodActive then
-                            snapCameraToTarget(false)
+                            local rx, ry, _ = camera.CFrame:ToEulerAnglesYXZ()
+                            targetRotationX = math.deg(ry)
+                            targetRotationY = math.clamp(math.deg(rx), -85, 85)
+                            rotationX = targetRotationX
+                            rotationY = targetRotationY
                         end
                     end
                 end
@@ -2108,19 +2121,25 @@ trackConnection(UserInputService.InputChanged:Connect(function(input)
     end
 end))
 
--- Main RenderStepped Loop
+-- Main RenderStepped loop
 genv.IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(function(dt)
     if not active then return end
 
     local fovLerpSpeed = math.clamp(movementSmoothness, 1, 30)
     camera.FieldOfView = camera.FieldOfView + (targetFov - camera.FieldOfView) * math.clamp(dt * fovLerpSpeed, 0, 1)
 
+    local trackingCenter = getTrackingCenter()
+
     local isPanActive = (mouseLocked and not tripodActive) or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
     if isPanActive then
         UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
         local delta = UserInputService:GetMouseDelta()
-        targetRotationX = targetRotationX - (delta.X * sensitivity)
-        targetRotationY = math.clamp(targetRotationY - (delta.Y * sensitivity), -85, 85)
+        local activeSens = sensitivity
+        if trackingCenter then
+            activeSens = sensitivity * math.clamp(15 / math.max(orbitDistance, 1), 0.08, 1.5)
+        end
+        targetRotationX = targetRotationX - (delta.X * activeSens)
+        targetRotationY = math.clamp(targetRotationY - (delta.Y * activeSens), -85, 85)
     else
         UserInputService.MouseBehavior = Enum.MouseBehavior.Default
     end
@@ -2133,16 +2152,11 @@ genv.IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(functio
     smoothedMovement.X = smoothedMovement.X + (movement.X - smoothedMovement.X) * lerpAlpha
     rotationZ = rotationZ + (tiltSpeed * dt * (smoothedMovement.Z - smoothedMovement.X))
 
-    local trackingCenter = getTrackingCenter()
-
-    -- ========================================================
     -- TRIPOD MODE LOGIC (Stationary Base + Dynamic Aim / Pan)
-    -- ========================================================
     if tripodActive then
         tripodPosition = tripodPosition or camera.CFrame.Position
         
         if trackingCenter then
-            -- Lensa kamera membidik dan mengikuti target secara otomatis dari posisi tripod
             local framedTarget = trackingCenter + Vector3.new(0, cameraHeightOffset, 0)
             local lookRotation = CFrame.lookAt(tripodPosition, framedTarget) * CFrame.Angles(0, 0, math.rad(rotationZ))
             
@@ -2154,7 +2168,6 @@ genv.IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(functio
             rotationX = targetRotationX
             rotationY = targetRotationY
         else
-            -- Tripod diam di tempat & dipan manual dengan mouse
             rotationX = rotationX + (targetRotationX - rotationX) * math.clamp(dt * panLerpSpeed, 0, 1)
             rotationY = rotationY + (targetRotationY - rotationY) * math.clamp(dt * panLerpSpeed, 0, 1)
             
@@ -2164,9 +2177,7 @@ genv.IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(functio
         return
     end
 
-    -- ========================================================
     -- STANDARD FREECAM & ORBIT LOGIC
-    -- ========================================================
     local currentForwardSpeed = tonumber(forwardSpeed) or 1.0
     local currentSideSpeed = tonumber(sideSpeed) or 1.0
 
@@ -2187,8 +2198,9 @@ genv.IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(functio
     smoothedMovement.Q = smoothedMovement.Q + (movement.Q - smoothedMovement.Q) * lerpAlpha
 
     if trackingCenter then
-        local sideAngularSpeed = currentSideSpeed * 65 * dt 
-        local forwardZoomSpeed = currentForwardSpeed * 10 * dt
+        local orbitScale = math.clamp(15 / math.max(orbitDistance, 1), 0.05, 2.0)
+        local sideAngularSpeed = currentSideSpeed * 65 * dt * orbitScale
+        local forwardZoomSpeed = currentForwardSpeed * math.clamp(orbitDistance * 0.6, 8, 40) * dt
         local verticalAngularSpeed = sideAngularSpeed * verticalSpeed
         
         targetOrbitDistance = math.max(targetOrbitDistance + (forwardZoomSpeed * (smoothedMovement.S - smoothedMovement.W)), 2)
@@ -2230,7 +2242,7 @@ genv.IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(functio
     end
 end))
 
--- Notification Slide-In Anim
+-- Notification frame positioning & animation
 NotificationFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 NotificationFrame.Position = UDim2.new(0.5, 0, 0.6, 0)
 
