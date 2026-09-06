@@ -1,5 +1,5 @@
 -- ==============================================================================
--- UFS V8 PRO: FAIL-SAFE EDITION (NO ANIMATION, LIMIT FIXED, HIDE V2 & SCROLL FIXED)
+-- UFS V8 PRO: FAIL-SAFE EDITION (ULTIMATE ACCURACY TARGET FIXED)
 -- ==============================================================================
 local StarterGui = game:GetService("StarterGui")
 pcall(function()
@@ -81,6 +81,7 @@ end)
 if genv.IY_Style_Freecam then
     pcall(function() genv.IY_Style_Freecam:Disconnect() end)
     genv.IY_Style_Freecam = nil
+    pcall(function() game:GetService("ContextActionService"):UnbindAction("UFS_MovementFreeze") end)
     
     local camera = workspace.CurrentCamera
     if camera then
@@ -119,6 +120,7 @@ end)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
 local GuiService = game:GetService("GuiService")
 local ChatService = game:GetService("Chat")
 local TextChatService = game:GetService("TextChatService")
@@ -489,7 +491,8 @@ end
 local function selectTrackingMode(mode)
     if trackingMode == mode then trackingMode = nil else
         trackingMode = mode; local currentCam = workspace.CurrentCamera
-        if mode == "Custom" and currentCam then customOrbitCenter = currentCam.CFrame.Position + (currentCam.CFrame.LookVector * 20) end
+        -- Kita menghapus logika reset Custom target 20 stud di sini
+        -- agar raycast Custom Pivot tidak di-overwrite.
     end
     refreshTrackButtonColors()
     if AppState.active and not AppState.tripodActive then
@@ -503,7 +506,16 @@ end
 
 UI.HeadTrackButton.MouseButton1Click:Connect(function() selectTrackingMode("Head") end)
 UI.BodyTrackButton.MouseButton1Click:Connect(function() selectTrackingMode("HumanoidRootPart") end)
-UI.CustomTrackButton.MouseButton1Click:Connect(function() selectTrackingMode("Custom") end)
+UI.CustomTrackButton.MouseButton1Click:Connect(function() 
+    local currentCam = workspace.CurrentCamera
+    if currentCam and not getTrackingCenter() then
+        -- Jika belum ada custom orbit yg diset, tembak 50 stud ke depan saat tombol diklik
+        local hit = workspace:Raycast(currentCam.CFrame.Position, currentCam.CFrame.LookVector * 50)
+        local targetPos = hit and hit.Position or (currentCam.CFrame.Position + currentCam.CFrame.LookVector * 20)
+        customOrbitCenter = targetPos - Vector3.new(0, CamConfig.cameraHeightOffset, 0)
+    end
+    selectTrackingMode("Custom") 
+end)
 
 UI.SetPivotButton = Instance.new("TextButton", UI.ControlsFrame)
 UI.SetPivotButton.Size = UDim2.new(1, -S(56), 0, S(22)); UI.SetPivotButton.Position = UDim2.new(0, S(14), 0, S(212)); UI.SetPivotButton.BackgroundColor3 = Color3.fromRGB(220, 200, 100); UI.SetPivotButton.Text = "🚫 🎯  SET CUSTOM TARGET"; UI.SetPivotButton.TextColor3 = Color3.fromRGB(0, 0, 0); UI.SetPivotButton.Font = Enum.Font.GothamBold; UI.SetPivotButton.TextSize = S(11); UI.SetPivotButton.AutoButtonColor = false
@@ -511,14 +523,29 @@ Instance.new("UICorner", UI.SetPivotButton).CornerRadius = UDim.new(0, S(4))
 
 UI.SetPivotButton.MouseButton1Click:Connect(function()
     local currentCam = workspace.CurrentCamera; if not currentCam then return end
-    local rayOrigin = currentCam.CFrame.Position; local rayDirection = currentCam.CFrame.LookVector * 2000
-    local raycastParams = RaycastParams.new(); raycastParams.FilterType = Enum.RaycastFilterType.Exclude; if player.Character then raycastParams.FilterDescendantsInstances = {player.Character} end
+    
+    local rayOrigin = currentCam.CFrame.Position; 
+    local rayDirection = currentCam.CFrame.LookVector * 2000
+    
+    local raycastParams = RaycastParams.new(); raycastParams.FilterType = Enum.RaycastFilterType.Exclude; 
+    if player.Character then raycastParams.FilterDescendantsInstances = {player.Character} end
+    
     local hit = workspace:Raycast(rayOrigin, rayDirection, raycastParams); local targetPos
-    if hit then targetPos = hit.Position; UI.SetPivotButton.Text = "✅  LOCKED TO TARGET!"; UI.SetPivotButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    else targetPos = rayOrigin + (currentCam.CFrame.LookVector * 50); UI.SetPivotButton.Text = "🔵 LOCKED TO AIR (50s)"; UI.SetPivotButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255) end
-    customOrbitCenter = targetPos; orbitDistance = (currentCam.CFrame.Position - targetPos).Magnitude; if orbitDistance < 4 then orbitDistance = 4 end; targetOrbitDistance = orbitDistance
+    
+    if hit then 
+        targetPos = hit.Position; UI.SetPivotButton.Text = "✅  LOCKED TO TARGET!"; UI.SetPivotButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    else 
+        targetPos = rayOrigin + (currentCam.CFrame.LookVector * 50); UI.SetPivotButton.Text = "🔵 LOCKED TO AIR (50s)"; UI.SetPivotButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255) 
+    end
+    
+    customOrbitCenter = targetPos - Vector3.new(0, CamConfig.cameraHeightOffset, 0)
+    orbitDistance = (currentCam.CFrame.Position - targetPos).Magnitude; if orbitDistance < 4 then orbitDistance = 4 end; targetOrbitDistance = orbitDistance
+    
     local rx, ry, _ = currentCam.CFrame:ToEulerAnglesYXZ(); targetRotationX = math.deg(ry); targetRotationY = math.clamp(math.deg(rx), -85, 85); rotationX = targetRotationX; rotationY = targetRotationY
-    if trackingMode ~= "Custom" then selectTrackingMode("Custom") end
+    
+    trackingMode = "Custom"
+    refreshTrackButtonColors()
+    
     task.spawn(function() task.wait(1.5); UI.SetPivotButton.Text = "✅ 🔐  LOCKED TO TARGET"; UI.SetPivotButton.BackgroundColor3 = Color3.fromRGB(70, 200, 55) end)
 end)
 
@@ -1047,18 +1074,48 @@ end)
 
 -- 11. CORE CAMERA RUNTIME
 local savedWalkSpeed, savedJumpPower = 16, 50
+local FREEZE_ACTION = "UFS_MovementFreeze"
 
 local function getHumanoid() local c = player.Character; if not c then return nil end; return c:FindFirstChildOfClass("Humanoid") end
 local function getHumanoidRootPart() local c = player.Character; if not c then return nil end; return c:FindFirstChild("HumanoidRootPart") end
 
 function setMovementEnabled(enabled)
-    pcall(function() local m = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule")); if m then if enabled then m:GetControls():Enable() else m:GetControls():Disable() end end end)
+    pcall(function() 
+        local ps = player:FindFirstChild("PlayerScripts")
+        if ps then
+            local pm = ps:FindFirstChild("PlayerModule")
+            if pm then
+                local m = require(pm)
+                if enabled then m:GetControls():Enable() else m:GetControls():Disable() end 
+            end
+        end
+    end)
+    
     local humanoid, hrp = getHumanoid(), getHumanoidRootPart()
+    
     if enabled then
-        if humanoid then humanoid.WalkSpeed = savedWalkSpeed; humanoid.JumpPower = savedJumpPower end
+        pcall(function() ContextActionService:UnbindAction(FREEZE_ACTION) end)
+        if humanoid then 
+            humanoid.WalkSpeed = (savedWalkSpeed and savedWalkSpeed > 0) and savedWalkSpeed or 16 
+            humanoid.JumpPower = (savedJumpPower and savedJumpPower > 0) and savedJumpPower or 50 
+        end
         if hrp then hrp.Anchored = false end 
     else
-        if humanoid then savedWalkSpeed = humanoid.WalkSpeed; savedJumpPower = humanoid.JumpPower; humanoid.WalkSpeed = 0; humanoid.JumpPower = 0 end
+        pcall(function()
+            ContextActionService:BindActionAtPriority(
+                FREEZE_ACTION,
+                function() return Enum.ContextActionResult.Sink end,
+                false,
+                Enum.ContextActionPriority.High.Value + 100,
+                Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
+                Enum.KeyCode.Space, Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right
+            )
+        end)
+        if humanoid then 
+            if humanoid.WalkSpeed > 0 then savedWalkSpeed = humanoid.WalkSpeed end
+            if humanoid.JumpPower > 0 then savedJumpPower = humanoid.JumpPower end
+            humanoid.WalkSpeed = 0; humanoid.JumpPower = 0 
+        end
         if hrp then hrp.Anchored = true end 
     end
 end
@@ -1114,19 +1171,32 @@ function toggleFreecam()
         end
     else
         setMovementEnabled(true)
-        if currentCam then currentCam.CameraType = Enum.CameraType.Custom; currentCam.FieldOfView = savedDefaultFov end
+        if currentCam then 
+            currentCam.CameraType = Enum.CameraType.Custom
+            currentCam.FieldOfView = savedDefaultFov 
+            local hum = getHumanoid()
+            if hum then currentCam.CameraSubject = hum end
+        end
         pcall(function() UserInputService.MouseBehavior = Enum.MouseBehavior.Default end)
     end
 end
 
 -- 12. EVENT LISTENERS & RUNTIME
 trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
+    -- CEK INPUT FREECAM SEBELUM "PROCESSED" (AGAR TIDAK DIBLOKIR OLEH CONTEXTACTIONSERVICE)
     if AppState.active then
+        if not AppState.tripodActive then
+            if input.KeyCode == Enum.KeyCode.W then movement.W = 1 end; if input.KeyCode == Enum.KeyCode.S then movement.S = 1 end; if input.KeyCode == Enum.KeyCode.A then movement.A = 1 end; if input.KeyCode == Enum.KeyCode.D then movement.D = 1 end; if input.KeyCode == Enum.KeyCode.E then movement.E = 1 end; if input.KeyCode == Enum.KeyCode.Q then movement.Q = 1 end
+        end
+        if input.KeyCode == Enum.KeyCode.Z then movement.Z = 1 end; if input.KeyCode == Enum.KeyCode.X then movement.X = 1 end; if input.KeyCode == Enum.KeyCode.C then rotationZ = 0 end
+        
         if input.KeyCode == Keybinds.SPEED_UP then Cfg.forward.setValue(Cfg.forward.getValue() + CamConfig.speedStep); Cfg.side.setValue(Cfg.side.getValue() + CamConfig.speedStep); return
         elseif input.KeyCode == Keybinds.SPEED_DOWN then Cfg.forward.setValue(Cfg.forward.getValue() - CamConfig.speedStep); Cfg.side.setValue(Cfg.side.getValue() - CamConfig.speedStep); return
         elseif input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then if not AppState.tripodActive then AppState.mouseLocked = not AppState.mouseLocked end end
     end
+    
     if processed then return end
+    
     if input.KeyCode == Keybinds.MENU then AppState.menuVisible = not AppState.menuVisible; toggleMenu(AppState.menuVisible) end
     if input.KeyCode == Keybinds.TOGGLE then toggleFreecam() end
     if input.KeyCode == Keybinds.HIDE_UI then toggleGameUI() end
@@ -1135,11 +1205,7 @@ trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
     if input.KeyCode == Keybinds.FOG_TOGGLE then toggleFog() end
     if input.KeyCode == Keybinds.DOF_TOGGLE then toggleDOF() end
     
-    if AppState.active and not AppState.tripodActive then
-        if input.KeyCode == Enum.KeyCode.W then movement.W = 1 end; if input.KeyCode == Enum.KeyCode.S then movement.S = 1 end; if input.KeyCode == Enum.KeyCode.A then movement.A = 1 end; if input.KeyCode == Enum.KeyCode.D then movement.D = 1 end; if input.KeyCode == Enum.KeyCode.E then movement.E = 1 end; if input.KeyCode == Enum.KeyCode.Q then movement.Q = 1 end
-    end
     if AppState.active then
-        if input.KeyCode == Enum.KeyCode.Z then movement.Z = 1 end; if input.KeyCode == Enum.KeyCode.X then movement.X = 1 end; if input.KeyCode == Enum.KeyCode.C then rotationZ = 0 end
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             local currentCam = workspace.CurrentCamera; if not currentCam then return end
             local ml = UserInputService:GetMouseLocation(); local ry = currentCam:ViewportPointToRay(ml.X, ml.Y - GuiService:GetGuiInset().Y)
@@ -1168,7 +1234,7 @@ trackConnection(UserInputService.InputEnded:Connect(function(input)
 end))
 
 trackConnection(UserInputService.InputChanged:Connect(function(input, processed)
-    if processed then return end -- FIX: Mencegah FOV berubah saat scroll di dalam GUI
+    if processed then return end 
     if not AppState.active then return end
     if input.UserInputType == Enum.UserInputType.MouseWheel then Cfg.fov.setValue(Cfg.fov.getValue() - (input.Position.Z * CamConfig.scrollSensitivity)) end
 end))
@@ -1176,6 +1242,14 @@ end))
 genv.IY_Style_Freecam = trackConnection(RunService.RenderStepped:Connect(function(dt)
     if not AppState.active then return end
     local currentCam = workspace.CurrentCamera; if not currentCam then return end
+
+    -- PAKSA KARAKTER DIAM & KAKU (MENGKALIBRASI ANTI-CHEAT/SPRINT SCRIPT MAP)
+    if not AppState.tripodActive then
+        pcall(function()
+            local hrp = getHumanoidRootPart()
+            if hrp and not hrp.Anchored then hrp.Anchored = true end
+        end)
+    end
 
     local fovLerpSpeed = math.clamp(CamConfig.movementSmoothness, 1, 30)
     currentCam.FieldOfView = currentCam.FieldOfView + (CamConfig.targetFov - currentCam.FieldOfView) * math.clamp(dt * fovLerpSpeed, 0, 1)
